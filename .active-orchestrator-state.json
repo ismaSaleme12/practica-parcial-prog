@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "step": "find-skill",
+  "owner": "active-orchestrator",
+  "kb": {
+    "created_by": "kb-creator",
+    "source": "ingest",
+    "discovery": {
+      "problem": "Un taller mecánico necesita una API para gestionar clientes, vehículos, órdenes de trabajo y stock de repuestos, con autenticación por cookie HttpOnly y autorización por roles decidida en la base de datos.",
+      "system_type": "api",
+      "domain": "automotive_repair (taller mecánico)",
+      "scale": "team",
+      "stack": "Python 3.12 + FastAPI 0.111 + SQLModel + SQLAlchemy 2.0 async + asyncpg + PostgreSQL 16 + Alembic + pydantic-settings + bcrypt + PyJWT",
+      "needs_infra": true
+    },
+    "files": [
+      "knowledge-base/01_vision_y_objetivos.md",
+      "knowledge-base/02_descripcion_general.md",
+      "knowledge-base/03_actores_y_roles.md",
+      "knowledge-base/04_modelo_de_datos.md",
+      "knowledge-base/05_reglas_de_negocio.md",
+      "knowledge-base/06_funcionalidades.md",
+      "knowledge-base/07_flujos_principales.md",
+      "knowledge-base/08_arquitectura_propuesta.md",
+      "knowledge-base/09_decisiones_y_supuestos.md",
+      "knowledge-base/10_preguntas_abiertas.md",
+      "knowledge-base/README.md"
+    ]
+  },
+  "roadmap": {
+    "created_by": "roadmap-generator",
+    "changes_file": "CHANGES.md"
+  },
+  "skills": {
+    "created_by": "find-skill",
+    "recommended": [
+      {
+        "name": "fastapi",
+        "repo": "fastapi/fastapi@fastapi",
+        "reason": "Proporciona las mejores prácticas oficiales de desarrollo con FastAPI 0.111, Pydantic, manejo asíncrono y estructuración de endpoints RESTful."
+      },
+      {
+        "name": "fastapi-patterns",
+        "repo": "affaan-m/ecc@fastapi-patterns",
+        "reason": "Patrones avanzados de desarrollo backend en FastAPI, incluyendo autenticación mediante JWT/cookies HttpOnly y manejo de Middleware."
+      },
+      {
+        "name": "sqlalchemy-alembic-expert",
+        "repo": "wispbit-ai/skills@sqlalchemy-alembic-expert-best-practices-code-review",
+        "reason": "Especializado en SQLAlchemy 2.0 async, SQLModel, PostgreSQL y migraciones continuas con Alembic."
+      },
+      {
+        "name": "postgresql-table-design",
+        "repo": "wshobson/agents@postgresql-table-design",
+        "reason": "Diseño óptimo de tablas, índices y restricciones para PostgreSQL 16 enfocados en el modelo de dominio del taller mecánico."
+      },
+      {
+        "name": "database-migrations",
+        "repo": "affaan-m/ecc@database-migrations",
+        "reason": "Gestión robusta y segura de migraciones de base de datos relacional con Alembic."
+      }
+    ],
+    "installed": []
+  }
+}
