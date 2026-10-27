@@ -14,7 +14,7 @@ async def liveness() -> dict:
 @router.get("/ready", status_code=status.HTTP_200_OK)
 async def readiness(session: AsyncSession = Depends(get_session)) -> dict:
     try:
-        await session.exec(text("SELECT 1"))
+        await session.execute(text("SELECT 1"))
         return {"status": "ready", "database": "connected"}
     except Exception as e:
         raise HTTPException(
