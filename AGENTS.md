@@ -42,9 +42,9 @@ La fuente de verdad del dominio vive en `knowledge-base/`. **Leé el archivo rel
 | [07_flujos_principales.md](knowledge-base/07_flujos_principales.md) | Flujos E2E (13 flujos) |
 | [08_arquitectura_propuesta.md](knowledge-base/08_arquitectura_propuesta.md) | Patrones, estructura de directorios, env vars |
 | [09_decisiones_y_supuestos.md](knowledge-base/09_decisiones_y_supuestos.md) | Decisiones DD-01..DD-14, supuestos SU-01..SU-07 |
-| [10_preguntas_abiertas.md](knowledge-base/10_preguntas_abiertas.md) | ⚠️ Inconsistencias a resolver ANTES de codear |
+| [10_preguntas_abiertas.md](knowledge-base/10_preguntas_abiertas.md) | Inconsistencias detectadas (IN-01..IN-04): IN-01/IN-02/IN-03 **resueltas** |
 
-> ⚠️ Resolver las preguntas de prioridad **Alta** de `10_preguntas_abiertas.md` (IN-01/IN-02: CHECK `>>` → `<>`; IN-03: Figura 1) antes de arrancar `C-03 domain-models`.
+> ✅ Las preguntas de prioridad **Alta** de `10_preguntas_abiertas.md` (IN-01/IN-02: los CHECK `>>` son `<>`; IN-03: Figura 1) están **resueltas contra el PDF original**, así que `C-03 domain-models` no tiene bloqueos.
 
 ---
 

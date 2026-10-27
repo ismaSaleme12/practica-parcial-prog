@@ -15,7 +15,7 @@ Base de conocimiento generada a partir de la consigna del TP integrador de **Pro
 | [07_flujos_principales.md](07_flujos_principales.md) | 13 flujos extremo a extremo: arranque, registro, login, cambio obligatorio, autorización, roles, alta/iniciar/terminar/cancelar orden, reposición/precio, salud, sólo agregado en psql |
 | [08_arquitectura_propuesta.md](08_arquitectura_propuesta.md) | Patrones (UoW, repository, soft delete, catálogo, append-only, DTO), estructura de directorios obligatoria, seguridad, variables de entorno, requisitos no funcionales |
 | [09_decisiones_y_supuestos.md](09_decisiones_y_supuestos.md) | 14 decisiones documentadas (DD-01 a DD-14) y 7 supuestos inferidos (SU-01 a SU-07) |
-| [10_preguntas_abiertas.md](10_preguntas_abiertas.md) | 4 inconsistencias detectadas (IN-01 a IN-04) y 7 preguntas abiertas priorizadas |
+| [10_preguntas_abiertas.md](10_preguntas_abiertas.md) | Inconsistencias detectadas (IN-01 a IN-04): **IN-01 a IN-03 resueltas contra el PDF**; quedan 4 preguntas abiertas de prioridad media/baja que no bloquean |
 
 ## Quick Start para Desarrolladores
 

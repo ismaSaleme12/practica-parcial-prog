@@ -116,14 +116,14 @@ usuario 1 ──── * historial_precio_repuesto (asociación)
 ### movimiento_stock (sólo agregado)
 
 - **Atributos**: `id`, `repuesto_id`, `orden_id` (nulo), `usuario_id`, `cantidad`, `motivo`, `cuando`
-- **Restricciones**: CHECK sobre `cantidad` (la consigna lo imprime como `cantidad >> 0`; ver `10_preguntas_abiertas.md` — se infiere `cantidad <> 0`, porque la reposición entra positiva y la salida de una orden sale negativa); **sólo agregado**
+- **Restricciones**: CHECK `cantidad <> 0` (**resuelto en IN-01**: la consigna lo imprime como `cantidad >> 0`, pero ese operador es un desplazamiento de bits que devuelve un entero y PostgreSQL rechaza el CHECK; la reposición entra positiva y la salida de una orden sale negativa); **sólo agregado**
 - **Relaciones**: N:1 con `repuesto`, opcional con `orden_trabajo`, y con `usuario`
 - **Nota**: punto único de escritura de stock (RN-14); la terminación de una orden deja **un movimiento por cada salida**
 
 ### historial_precio_repuesto (sólo agregado)
 
 - **Atributos**: `id`, `repuesto_id`, `usuario_id`, `precio_anterior` (NUMERIC 10,2), `precio_nuevo` (NUMERIC 10,2), `cuando`
-- **Restricciones**: CHECK `precio_nuevo > 0`; CHECK sobre la comparación con `precio_anterior` (la consigna lo imprime como `precio_nuevo >> precio_anterior`; ver `10_preguntas_abiertas.md` — se infiere `precio_nuevo <> precio_anterior`, porque el CHECK del ejemplo «no agrega línea si el PATCH no cambia el precio»); **sólo agregado**
+- **Restricciones**: CHECK `precio_nuevo > 0`; CHECK `precio_nuevo <> precio_anterior` (**resuelto en IN-02**: la consigna lo imprime como `precio_nuevo >> precio_anterior`, pero `>>` no existe para `NUMERIC` en PostgreSQL; el precio puede subir o bajar, y un PATCH que no cambia el precio no deja línea); **sólo agregado**
 - **Relaciones**: N:1 con `repuesto` y `usuario`
 - **Nota**: cada cambio de precio deja una línea en la **misma transacción** que el cambio (RN-20); un PATCH que no cambia el precio no deja línea
 
