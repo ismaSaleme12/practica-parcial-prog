@@ -41,7 +41,7 @@ El sistema modela el circuito completo del taller:
 
 La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices únicos parciales para el borrado lógico y los roles vigentes, un catálogo de estados y un disparador de **sólo agregado** sobre tres tablas de auditoría.
 
-**Estado actual:** los changes `C-01` a `C-08` están implementados y archivados (proyecto, persistencia, modelos, migraciones, tests, contratos, autenticación y RBAC). El dominio del taller (`C-09` a `C-13`: clientes/vehículos, repuestos/stock, órdenes y lectura sin N+1) está pendiente.
+**Estado actual:** los changes `C-01` a `C-10` están implementados y archivados (proyecto, persistencia, modelos, migraciones, tests, contratos, autenticación, RBAC, clientes/vehículos y repuestos/stock). Queda el núcleo del dominio: órdenes de trabajo (`C-11`), la auditoría de lectura sin N+1 (`C-12`) y la consolidación de la evidencia de entrega (`C-13`).
 
 ---
 
@@ -49,7 +49,7 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 
 <!-- ACTUALIZAR AL ARCHIVAR UN CHANGE: marcar la fila como completada, ajustar el contador de pruebas y mover el change de pending a openspec/changes/archive/. -->
 
-**Changes completados: 8 de 13.** **Suite: 64 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
+**Changes completados: 10 de 13.** **Suite: 124 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
 
 | ID | Change | Estado | Fase |
 |---|---|---|---|
@@ -61,13 +61,13 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 | C-06 | `contracts-and-errors` | ✓ completado | 3 — Contratos |
 | C-07 | `auth` | ✓ completado | 3 — Autenticación |
 | C-08 | `authorization-rbac` | ✓ completado | 4 — Autorización |
-| C-09 | `clientes-vehiculos` | ☐ pendiente | 5 — Dominio del taller |
-| C-10 | `repuestos-stock` | ☐ pendiente | 5 — Dominio del taller |
+| C-09 | `clientes-vehiculos` | ✓ completado | 5 — Dominio del taller |
+| C-10 | `repuestos-stock` | ✓ completado | 5 — Dominio del taller |
 | C-11 | `ordenes-trabajo` | ☐ pendiente | 5 — Dominio del taller |
 | C-12 | `detalle-sin-n1` | ☐ pendiente | 6 — Calidad de lectura |
 | C-13 | `casos-de-prueba` | ☐ pendiente | 6 — Entrega |
 
-Los ocho changes completados están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/`.
+Los diez changes completados están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/` (30 capacidades).
 
 > **Cómo actualizar esta sección** (obligatorio al archivar un change): (1) marcar la fila con ✓, (2) actualizar el contador de changes y el de pruebas con el resultado real de `python -m pytest test/ -q`, (3) mover el directorio del change de `openspec/changes/` a `openspec/changes/archive/`, (4) marcar el `[x]` en `CHANGES.md`. No se actualiza «a ojo»: el contador sale de la corrida de la suite.
 
@@ -177,14 +177,18 @@ practica-parcial-prog/
 │       │   └── router.py       # Routers /usuarios y /eventos (grupo protegido)
 │       ├── clientes/
 │       │   ├── models.py       # cliente, vehiculo
-│       │   └── repository.py   # ClienteRepository (usado por el auto-registro)
+│       │   ├── schemas.py      # ClienteCrear, ClienteFicha, VehiculoCrear, VehiculoLeer
+│       │   ├── repository.py   # ClienteRepository, VehiculoRepository (selectinload, órdenes abiertas)
+│       │   ├── unit_of_work.py # ClientesUnitOfWork
+│       │   ├── service.py      # Ficha con vehículos, alta de vehículo, baja con 409, /mis-vehiculos
+│       │   └── router.py       # /clientes, /vehiculos y /mis-vehiculos (grupo protegido)
 │       ├── repuestos/
 │       │   ├── models.py       # repuesto, movimiento_stock, historial_precio_repuesto
-│       │   ├── schemas.py      # RepuestoCrear (sin stock), RepuestoLeer, RepuestoPatch
-│       │   ├── repository.py   # SoftDeleteRepository + búsqueda q parametrizada
-│       │   ├── unit_of_work.py # RepuestosUnitOfWork
-│       │   ├── service.py      # Listado, detalle y alta con stock 0
-│       │   └── router.py       # /repuestos (grupo protegido)
+│       │   ├── schemas.py      # RepuestoCrear (stock_inicial), RepuestoPatch, ReponerStock, historiales
+│       │   ├── repository.py   # SoftDeleteRepository + búsqueda q + repositorios de sólo agregado
+│       │   ├── unit_of_work.py # RepuestosUnitOfWork (catálogo + movimientos + historial de precios)
+│       │   ├── service.py      # Alta con stock_inicial, PATCH con historial, baja, reposición
+│       │   └── router.py       # /repuestos completo (grupo protegido)
 │       └── ordenes/
 │           └── models.py       # estado_orden, orden_trabajo, item_orden, historial_estado_orden
 ├── migrations/
@@ -203,20 +207,24 @@ practica-parcial-prog/
 │   ├── test_contracts.py       # Contratos, errores, paginación, búsqueda
 │   ├── test_auth.py            # Registro, login, cookie, cambio de clave
 │   ├── test_rbac.py            # 401/403, roles, autoprotección, eventos
-│   ├── contracts.http          # Evidencia C-06 (⚠ requiere sesión, ver Limitaciones)
+│   ├── test_clientes.py        # Clientes, vehículos, baja lógica, /mis-vehiculos
+│   ├── test_repuestos.py       # Catálogo, stock, historial de precios, reposición
+│   ├── contracts.http          # Evidencia C-06 (abre con login de ADMIN)
 │   ├── auth.http               # Evidencia C-07
-│   └── rbac.http               # Evidencia C-08
+│   ├── rbac.http               # Evidencia C-08
+│   ├── clientes.http           # Evidencia C-09
+│   └── repuestos.http          # Evidencia C-10
 ├── knowledge-base/             # 10 documentos de dominio + README
 ├── openspec/
 │   ├── config.yaml
-│   ├── specs/                  # Capacidades especificadas (24)
+│   ├── specs/                  # Capacidades especificadas (30)
 │   └── changes/
-│       └── archive/            # C-01 a C-08 archivados
+│       └── archive/            # C-01 a C-10 archivados
 └── docs/
     └── TP_Cap1a6_Consigna.pdf  # Consigna original (22 páginas)
 ```
 
-> `app/modules/clientes/` y `app/modules/ordenes/` todavía **no** tienen `schemas.py`, `service.py`, `router.py` ni `unit_of_work.py`: los crean `C-09`, `C-10` y `C-11`. Hoy existen las tablas y los modelos, pero no sus endpoints.
+> `app/modules/ordenes/` todavía **no** tiene `schemas.py`, `service.py`, `router.py` ni `unit_of_work.py`: los crea `C-11`. Hoy existen las tablas y los modelos, pero no sus endpoints.
 
 ---
 
@@ -376,7 +384,7 @@ Definidos en `main.py`. El control de contraseña provisoria se monta **una sola
 | Grupo | Rutas | Exige |
 |---|---|---|
 | **Abierto** | `/health/*`, `/auth/*` | Nada. `/auth/yo` y `/auth/cambiar-password` exigen sesión **por dentro**, pero no el cambio obligatorio |
-| **Protegido** | `/usuarios`, `/eventos`, `/repuestos` (y los módulos futuros) | Sesión válida (401) y `debe_cambiar_password = false` (403) |
+| **Protegido** | `/usuarios`, `/eventos`, `/clientes`, `/vehiculos`, `/mis-vehiculos`, `/repuestos` (y los módulos futuros) | Sesión válida (401) y `debe_cambiar_password = false` (403) |
 
 El 403 de contraseña provisoria dice: «Tenés que cambiar la contraseña provisoria antes de usar esta ruta.» `/auth` queda abierto a propósito: si el grupo protegido incluyera el cambio de contraseña, el usuario afectado no podría cambiar la clave nunca.
 
@@ -421,28 +429,44 @@ Lista extraída del código (`main.py` y los routers), no del roadmap. Todas las
 | DELETE | `/usuarios/{usuario_id}/roles/{rol}` | ADMIN | Revoca escribiendo `revocada_en` (no borra) + evento; autoprotección RN-05 | `200`, `404`, `409` |
 | GET | `/eventos` | ADMIN | Historial de seguridad paginado (`page`, `size`) | `200`, `422` |
 
+### Módulo `clientes` (grupo protegido)
+
+| Método | Ruta | Rol requerido | Descripción | Códigos |
+|---|---|---|---|---|
+| POST | `/clientes` | ADMIN, RECEPCION | Alta de ficha de cliente (`documento` UNIQUE) | `201`, `409`, `422` |
+| GET | `/clientes/{cliente_id}` | ADMIN, RECEPCION | Ficha con sus vehículos **vigentes** precargados (`selectinload`, 2 consultas fijas) | `200`, `404` |
+| POST | `/clientes/{cliente_id}/vehiculos` | ADMIN, RECEPCION | Alta de vehículo del cliente; patente única entre vigentes | `201`, `404`, `409`, `422` |
+| DELETE | `/vehiculos/{vehiculo_id}` | ADMIN, RECEPCION | Baja **lógica** (`borrado_en`); 409 si tiene órdenes abiertas | `204`, `404`, `409` |
+| GET | `/mis-vehiculos` | Cualquier sesión | Vehículos del cliente dueño de la sesión (RN-17); `[]` si la cuenta no tiene ficha | `200` |
+
 ### Módulo `repuestos` (grupo protegido)
 
 | Método | Ruta | Rol requerido | Descripción | Códigos |
 |---|---|---|---|---|
 | GET | `/repuestos` | ADMIN, RECEPCION, MECANICO | Listado paginado de vigentes, búsqueda `q` en descripción (parámetro ligado) | `200`, `422` |
 | GET | `/repuestos/{repuesto_id}` | ADMIN, RECEPCION, MECANICO | Detalle de un repuesto vigente | `200`, `404` |
-| POST | `/repuestos` | ADMIN | Alta con `codigo`, `descripcion` y `precio`; **nace con stock 0** | `201`, `409`, `422` |
+| POST | `/repuestos` | ADMIN | Alta con `stock_inicial` (default 0); deja el movimiento «Stock inicial» en el mismo UoW | `201`, `409`, `422` |
+| PATCH | `/repuestos/{repuesto_id}` | ADMIN | **Sólo** `descripcion` y `precio` (`exclude_unset`); un precio distinto deja línea en el historial | `200`, `404`, `422` |
+| DELETE | `/repuestos/{repuesto_id}` | ADMIN | Baja **lógica** (`borrado_en`); el código vuelve a quedar libre | `204`, `404` |
+| POST | `/repuestos/{repuesto_id}/reponer` | ADMIN | Reposición: suma stock y deja el movimiento de entrada (RN-14) | `200`, `404`, `422` |
+| GET | `/repuestos/{repuesto_id}/movimientos` | ADMIN | Historial de movimientos de stock, paginado | `200`, `404`, `422` |
+| GET | `/repuestos/{repuesto_id}/precios` | ADMIN | Historial de cambios de precio, paginado | `200`, `404`, `422` |
 
 Notas de contrato verificadas en el código:
 
-- El alta de repuesto **no** declara `stock` ni `stock_inicial`: enviarlos es 422 (`extra="forbid"`). El stock inicial llega en `C-10`.
+- El alta de repuesto declara `stock_inicial` (`ge=0`) y **no** declara `stock`: enviar `stock` sigue siendo 422 (`extra="forbid"`). El stock sólo se escribe por el alta con `stock_inicial` y por `reponer`, y en ambos casos con su `movimiento_stock` en el mismo UoW (RN-14).
+- `PATCH /repuestos/{id}` con el mismo precio (o sin `precio`) responde `200` y **no** deja línea de historial (RN-20).
+- `DELETE` de repuesto y de vehículo son **bajas lógicas**: la fila se conserva con `borrado_en`; después de la baja, `GET` por id responde 404.
 - El dinero viaja como **string Decimal** (`"8500.00"`), nunca como número.
 - Los listados usan el envoltorio uniforme `{items, total, page, size, pages}`; `page` empieza en 1, `size` va de 1 a 100 (default 20) y una página fuera de rango es 422 con mensaje propio.
+- Un `q` con comillas (`' OR '1'='1`) viaja como **parámetro ligado**: devuelve `total: 0`, no filas de más (caso C-16).
 
-### Pendientes (`C-09` a `C-13`)
+### Pendientes (`C-11` a `C-13`)
 
 Estas rutas **todavía no existen** en el código; hoy responderían 404. Se listan para no confundirlas con lo implementado:
 
 | Change | Rutas planificadas |
 |---|---|
-| C-09 | `POST /clientes`, `GET /clientes/{id}` (con vehículos), `POST /clientes/{id}/vehiculos`, `DELETE /vehiculos/{id}`, `GET /mis-vehiculos` |
-| C-10 | `PATCH /repuestos/{id}` (descripción y precio, con historial), `DELETE /repuestos/{id}`, `POST /repuestos/{id}/reponer`, `GET /repuestos/{id}/movimientos`, `GET /repuestos/{id}/precios`, y `stock_inicial` en el alta |
 | C-11 | `POST /ordenes`, `GET /ordenes`, `GET /ordenes/{id}`, `POST /ordenes/{id}/iniciar`, `POST /ordenes/{id}/terminar`, `POST /ordenes/{id}/cancelar`, `GET /estados-orden`, `GET /mis-ordenes` |
 | C-12 | Lecturas con número fijo de consultas en `GET /ordenes/{id}`, `GET /clientes/{id}` y `/mis-*` (no agrega rutas nuevas) |
 | C-13 | Ninguna ruta: consolida la evidencia `.http`, `test/solo_agregado.sql` y la suite |
@@ -604,14 +628,20 @@ La suite está configurada en `test/pytest.ini`: `asyncio_mode = auto`, `pythonp
 
 Qué hace `test/conftest.py`:
 
-- Fija las variables de test **antes** de importar la app: `POSTGRES_DB=taller_mecanico_test`, `SECRET_KEY` de prueba, `COOKIE_SECURE=false`, `SQL_ECHO=false`, `BCRYPT_ROUNDS=4`.
+- Fija las variables de test **antes** de importar la app: `POSTGRES_DB=taller_mecanico_test` (o el que indique `TEST_POSTGRES_DB`), `SECRET_KEY` de prueba, `COOKIE_SECURE=false`, `SQL_ECHO=false`, `BCRYPT_ROUNDS=4`.
 - Crea la base de test si no existe y aplica `alembic upgrade head` una sola vez por sesión.
 - Re-ejecuta `seed.py` antes de cada test (sin transacciones «trucadas»).
 - Expone un `httpx.AsyncClient` con `ASGITransport` y el lifespan real de la app, más el helper `login(email, password)` y fixtures de sesión por rol.
 
+`TEST_POSTGRES_DB` permite apuntar la suite a otra base (por ejemplo `taller_mecanico_c10`). Sirve para correr dos suites en paralelo sin que los `TRUNCATE` de una pisen los datos de la otra:
+
+```powershell
+$env:TEST_POSTGRES_DB="taller_mecanico_c10"; python -m pytest test/ -q
+```
+
 Corre contra **PostgreSQL real**: sin SQLite, sin repositorios falsos, sin mocks de red y sin testcontainers. El único doble es el de `/health/ready` cuando se simula una caída de infraestructura.
 
-**Resultado actual: 64 pruebas en verde.**
+**Resultado actual: 124 pruebas en verde.**
 
 ### Qué cubre cada archivo
 
@@ -623,6 +653,8 @@ Corre contra **PostgreSQL real**: sin SQLite, sin repositorios falsos, sin mocks
 | `test/test_contracts.py` | 19 | `extra="forbid"`, límite de 72 bytes, contraseña multibyte, paginación y 422, envoltorio uniforme, dinero como string, `q` con comillas sin inyección (parte SQL del caso C-16), `IntegrityError` → 409, 404 propios, convención PATCH |
 | `test/test_auth.py` | 19 | Registro OK/repetido (caso C-02), login sin token en el cuerpo, cookie vs Bearer (C-03), 429 con `Retry-After` sin hash (C-05), hash ficticio (RN-09), cambio de clave y RN-07 (C-04), logout, ninguna respuesta con `password_hash` |
 | `test/test_rbac.py` | 18 | 401 vs 403, matriz de repuestos, claim `roles` que no autoriza, revocación inmediata (C-07), `vence_en` sin zona/pasado → 422, autoprotección (C-08), 403 por contraseña provisoria, eventos de seguridad, `/eventos` paginado |
+| `test/test_clientes.py` | 14 | Alta de cliente y vehículo, documento y patente repetidos → 409, `GET /clientes/{id}` con vehículos precargados, baja con órdenes abiertas → 409, patente reutilizable tras la baja (C-19), aislamiento de `/mis-vehiculos` (RN-17), 401/403 |
+| `test/test_repuestos.py` | 46 | `stock_inicial` + movimiento «Stock inicial», `stock` por PATCH → 422 (C-16), historial de precio sólo si cambió (C-18), `reponer` con movimiento, baja lógica y reutilización del código, `q` con inyección → `total: 0`, paginación de movimientos y precios, 401/403 |
 
 ### Evidencia `.http`
 
@@ -630,9 +662,11 @@ Los archivos `test/*.http` son la **evidencia pedida por la consigna**; la suite
 
 | Archivo | Contenido |
 |---|---|
-| `test/contracts.http` | Contratos, paginación, 409/404 y validaciones (C-06). **Desactualizado frente al RBAC**: sus peticiones no inician sesión y hoy `/repuestos` y `/usuarios` son del grupo protegido (ver [Limitaciones](#limitaciones-y-deuda-conocida)) |
+| `test/contracts.http` | Contratos, paginación, 409/404 y validaciones (C-06). Abre con un login de ADMIN para que las peticiones caigan en el grupo protegido |
 | `test/auth.http` | Registro, login, cookie vs Bearer, 429, `/auth/yo`, cambio de clave y logout (C-07) |
 | `test/rbac.http` | 401/403, matriz de roles, revocación inmediata, `vence_en`, autoprotección, contraseña provisoria y eventos (C-08) |
+| `test/clientes.http` | Alta de cliente y vehículo, patente repetida tras la baja, baja con orden abierta y aislamiento de `/mis-vehiculos` (C-09) |
+| `test/repuestos.http` | Casos B-01 a B-04: stock no editable, precio historiado, PATCH sin cambio sin línea, RECEPCION → 403 en ADMIN; más reposición, historiales y baja lógica (C-10) |
 
 ### Mapeo de los casos C-01 a C-19
 
@@ -653,12 +687,12 @@ Los archivos `test/*.http` son la **evidencia pedida por la consigna**; la suite
 | C-13 | Cancelar una orden TERMINADA → 409 | ☐ pendiente (`C-11`) |
 | C-14 | `UPDATE`/`DELETE` rechazados en las tablas de sólo agregado | ☐ pendiente: `test/solo_agregado.sql` **no existe todavía** (`C-13`); se ejercita con `psql` |
 | C-15 | Detalle con 2 y 4 ítems usa el mismo número de consultas | ☐ pendiente (`C-12`) |
-| C-16 | `stock` por PATCH → 422 e inyección SQL en `q` | ◐ parcial: la parte SQL está en `test_contracts.py`; la parte del PATCH llega con `C-10` |
+| C-16 | `stock` por PATCH → 422 e inyección SQL en `q` | ✓ `test_repuestos.py` |
 | C-17 | Estado no declarado → 422 | ☐ pendiente (`C-11`) |
-| C-18 | PATCH sin cambio de precio no deja línea | ☐ pendiente (`C-10`) |
-| C-19 | Patente reutilizable después de la baja | ☐ pendiente (`C-09`) |
+| C-18 | PATCH sin cambio de precio no deja línea | ✓ `test_repuestos.py` |
+| C-19 | Patente reutilizable después de la baja | ✓ `test_clientes.py` |
 
-Quedan **7 casos completamente cubiertos** (C-01 a C-05, C-07 y C-08), 1 parcial (C-16) y 11 pendientes de los changes de dominio. La matriz definitiva —`.http` + prueba automatizada por caso— es entregable de `C-13`.
+Quedan **10 casos completamente cubiertos** (C-01 a C-05, C-07, C-08, C-16, C-18 y C-19) y **9 pendientes** de los changes de dominio. La matriz definitiva —`.http` + prueba automatizada por caso— es entregable de `C-13`.
 
 ---
 
@@ -675,8 +709,8 @@ El proyecto usa **OPSX/OpenSpec** (spec-driven development). Cada unidad de trab
 ```
 
 - **Changes en curso:** `openspec/changes/<change>/` con `proposal.md`, `design.md`, `tasks.md` y `specs/`.
-- **Changes cerrados:** `openspec/changes/archive/<fecha>-<change>/` (C-01 a C-08 ya archivados).
-- **Capacidades vigentes:** `openspec/specs/<capacidad>/spec.md` (24 capacidades).
+- **Changes cerrados:** `openspec/changes/archive/<fecha>-<change>/` (C-01 a C-10 ya archivados).
+- **Capacidades vigentes:** `openspec/specs/<capacidad>/spec.md` (30 capacidades).
 - **Orden y dependencias:** `CHANGES.md` es el índice canónico (árbol, gates, camino crítico, plan con 3 agentes).
 
 **Commits:** Conventional Commits en español (`feat:`, `fix:`, `test:`, `chore:`), **sin trailers de co-autoría IA**. No se commitea ni se pushea sin pedido explícito del usuario.
@@ -713,16 +747,16 @@ Lo que falta o merece atención, sin dramatizar:
 
 **Alcance pendiente**
 
-- **No existen endpoints de clientes, vehículos ni órdenes** (`C-09`, `C-11`). Las tablas y los modelos están; los routers y servicios no. Hoy `/clientes`, `/vehiculos`, `/ordenes`, `/estados-orden` y `/mis-*` responden 404.
-- **El módulo `repuestos` está a medio ABM** (`C-10`): hay listado, detalle y alta, pero no `PATCH`, baja lógica, reposición ni historiales. El alta **no acepta `stock_inicial`** y siempre crea stock 0 (el contrato rechaza el campo con 422).
-- **No hay verificación de N+1 ni de `BackgroundTasks`** (`C-12`): todavía no hay lecturas con relaciones ni aviso post-respuesta que auditar.
-- **Falta la evidencia de entrega** (`C-13`): `test/solo_agregado.sql` (caso C-14) no existe, y quedan casos C-06, C-09 a C-15, C-17 a C-19 sin prueba automatizada.
+- **No existen endpoints de órdenes de trabajo** (`C-11`). Las tablas, los modelos y el catálogo `estado_orden` están; el router y el servicio no. Hoy `/ordenes`, `/estados-orden` y `/mis-ordenes` responden 404. Es el change crítico: la transacción multi-escritura (orden + ítems + historial + movimientos de stock) y el descuento de stock al terminar.
+- **`C-09` y `C-10` dejaron el dominio completo salvo la orden**: clientes, vehículos, repuestos, stock y precios ya funcionan; el stock se descuenta sólo desde `C-11`.
+- **No hay verificación de N+1 ni de `BackgroundTasks`** (`C-12`): `/clientes/{id}` y `/mis-vehiculos` ya precargan con un número fijo de consultas, pero falta el conteo automatizado; tampoco hay todavía aviso post-respuesta que auditar.
+- **Falta la evidencia de entrega** (`C-13`): `test/solo_agregado.sql` (caso C-14) no existe, y quedan casos C-06, C-09 a C-15 y C-17 sin prueba automatizada.
 
 **Deuda técnica observada en el código**
 
-- **`session.execute()` genera `DeprecationWarning` de SQLModel** en `app/core/repository.py:84` (el `count`) y en `app/modules/usuarios/repository.py:133,155,184` (conteos y `scalar_one`/`one`), además de `app/modules/health/router.py:17`. Son usos legítimos de `Row`/escalar, pero la suite emite 161 warnings. Si se migran a `exec()`, hay que revisar que no cambien los tipos de retorno.
+- **`session.execute()` genera `DeprecationWarning` de SQLModel** en `app/core/repository.py:84` (el `count`) y en `app/modules/usuarios/repository.py:133,155,184` (conteos y `scalar_one`/`one`), además de `app/modules/health/router.py:17`. Son usos legítimos de `Row`/escalar, pero con 124 pruebas la suite emite 294 warnings. Si se migran a `exec()`, hay que revisar que no cambien los tipos de retorno.
 - **`/health/ready` devuelve `str(e)` en el `detail` del 503.** Eso puede exponer texto interno del motor (host, usuario, mensaje de conexión) y va contra el espíritu de RN-18, que prohíbe filtrar detalles de la infraestructura. Lo correcto sería un mensaje fijo y el detalle sólo en el log.
-- **`test/contracts.http` quedó desactualizado después de `C-08`.** El archivo dice que «todavía no hay autenticación» y no inicia sesión; sus `GET /repuestos` y `POST /usuarios` hoy responden 401 porque esas rutas pasaron al grupo protegido. La réplica `test_contracts.py` sí se actualizó (usa la fixture `admin`). Hay que refrescar el `.http` en `C-13`.
+- **Sin bloqueo de fila en el stock.** `POST /repuestos/{id}/reponer` y el futuro descuento de `C-11` leen y escriben `stock` sin `SELECT ... FOR UPDATE`: la concurrencia está fuera de alcance (capítulo 7), pero dos reposiciones simultáneas pueden perder una actualización.
 - **La documentación describe el objetivo completo, no sólo lo implementado.** `knowledge-base/02_descripcion_general.md` lista todos los endpoints (incluidos los de `C-09` a `C-13`) y `knowledge-base/08_arquitectura_propuesta.md` muestra la estructura de módulos completa. La estructura real de hoy está en [Estructura de directorios](#estructura-de-directorios) y la lista real de rutas en [Endpoints](#endpoints).
 - **`app/modules/ordenes/models.py` documenta el módulo como `ordenes`, pero la KB lo llama `ordeneses`** en una tabla (`04_modelo_de_datos.md`, §Dominios). Es una errata de la KB; manda el nombre del código.
 - **`practica-parcial-prog-main/`** es un directorio **vacío** residual en la raíz; no forma parte del proyecto.

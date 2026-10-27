@@ -290,7 +290,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 > GATE 7 — los dos módulos de soporte se implementan en paralelo; C-11 espera a ambos.
 
 ### [C-09] `clientes-vehiculos`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Épica 6 (US-017 a US-019) — módulo `clientes` completo (6 capas)
   - `POST /clientes` (RECEPCION, ADMIN): 201/409 (documento único)/422
   - `GET /clientes/{id}` (RECEPCION, ADMIN): ficha **con vehículos** por carga anticipada en el repositorio (sin lazy loading)
@@ -311,7 +311,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ---
 
 ### [C-10] `repuestos-stock`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Épica 7 (US-020 a US-022) — módulo `repuestos` completo con auditoría de stock y precios
   - `GET /repuestos` (`q`, `page`, `size`) para ADMIN/RECEPCION/MECANICO: búsqueda con parámetros ligados; `' OR '1'='1` → lista vacía `total: 0` (C-16)
   - `GET /repuestos/{id}`: 200/404

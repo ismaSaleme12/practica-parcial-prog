@@ -1,0 +1,240 @@
+# Evidencia del change C-10 — repuestos, stock e historiales
+# (Épica 7, US-020 a US-022; casos B-01 a B-04 del enunciado).
+#
+# Requiere la app levantada (uvicorn main:app --reload) y la base migrada + seed.py.
+# Todos los usuarios del seed tienen la contraseña `secreto123`.
+#
+# Regla que ordena esta evidencia:
+#   - El stock es el **punto único de escritura** (RN-14): sólo cambia por el
+#     alta con `stock_inicial` y por `POST /repuestos/{id}/reponer`. El PATCH no
+#     lo acepta (422, caso C-16).
+#   - Cada cambio de precio deja **una** línea en `historial_precio_repuesto`, en
+#     el mismo UoW; un PATCH que no cambia el precio no deja ninguna (RN-20,
+#     caso C-18).
+#   - `movimiento_stock` e `historial_precio_repuesto` son de sólo agregado
+#     (RN-15): nunca se actualizan ni se borran.
+#
+# Matriz de permisos (03_actores_y_roles.md):
+#   - GET /repuestos y GET /repuestos/{id}: ADMIN, RECEPCION, MECANICO.
+#   - POST /repuestos, PATCH, DELETE, /reponer, /movimientos, /precios: ADMIN.
+#
+# En cada bloque se comenta el código y el cuerpo esperado.
+
+@baseUrl = http://localhost:8000
+@password = secreto123
+
+### 0) Login de ADMIN: las rutas están en el grupo protegido
+# Sin sesión, las seis rutas de ADMIN responden 401 (no 403).
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200 con la cookie `access_token` (HttpOnly). Se conserva para los
+# bloques siguientes. `GET /auth/yo` confirma la identidad y los roles vigentes.
+
+### 1) Catálogo: listado paginado y búsqueda con parámetros ligados (US-020)
+GET {{baseUrl}}/repuestos?q=Filtro&page=1&size=20
+
+# Esperado: 200
+# {
+#   "items": [ { "id": 1, "codigo": "FA-001", "descripcion": "Filtro de aceite",
+#                "precio": "8500.00", "stock": 10 } ],
+#   "total": 1, "page": 1, "size": 20, "pages": 1
+# }
+# El dinero viaja como string Decimal, nunca como número.
+
+### 2) Búsqueda con inyección SQL → lista vacía (caso C-16)
+GET {{baseUrl}}/repuestos?q=' OR '1'='1
+
+# Esperado: 200
+# { "items": [], "total": 0, "page": 1, "size": 20, "pages": 0 }
+# El patrón viaja como parámetro ligado: las comillas son texto, no SQL.
+
+### 3) Alta con stock_inicial: 201 y movimiento «Stock inicial» (US-021 CA-1)
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "ZZ-101",
+  "descripcion": "Bomba de agua",
+  "precio": "15000.00",
+  "stock_inicial": 7
+}
+
+# Esperado: 201
+# { "id": 5, "codigo": "ZZ-101", "descripcion": "Bomba de agua",
+#   "precio": "15000.00", "stock": 7 }
+# En el mismo UoW queda un `movimiento_stock` con cantidad 7, motivo
+# "Stock inicial" y usuario_id del ADMIN.
+
+### 4) Alta con `stock` (no `stock_inicial`) → 422 (RN-14 / caso C-16)
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "ZZ-102",
+  "descripcion": "Stock por la puerta de atrás",
+  "precio": "500.00",
+  "stock": 5
+}
+
+# Esperado: 422
+# { "detail": "La petición no cumple el contrato.", "errores": [ { "campo": "stock", ... } ] }
+# `stock` no está declarado en el contrato: el stock sólo cambia por movimientos.
+
+### 5) B-01 — `stock` en PATCH → 422 (el stock no se edita a mano)
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+
+{
+  "stock": 99
+}
+
+# Esperado: 422
+# { "detail": "La petición no cumple el contrato.", "errores": [ { "campo": "stock", ... } ] }
+# Después, GET /repuestos/1 sigue devolviendo "stock": 10.
+
+### 6) PATCH sólo de descripción → 200 y sin línea de historial
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+
+{
+  "descripcion": "Filtro de aceite premium"
+}
+
+# Esperado: 200
+# { "id": 1, "codigo": "FA-001", "descripcion": "Filtro de aceite premium",
+#   "precio": "8500.00", "stock": 10 }
+# `exclude_unset`: sólo cambia la descripción; el precio no se toca.
+
+### 7) B-02 — cambio de precio → una línea nueva en el historial
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+
+{
+  "precio": "9000.00"
+}
+
+# Esperado: 200 con "precio": "9000.00".
+# Después:
+GET {{baseUrl}}/repuestos/1/precios
+
+# Esperado: 200
+# {
+#   "items": [
+#     { "id": 1, "precio_anterior": "8000.00", "precio_nuevo": "8500.00",
+#       "usuario_id": 1, "cuando": "..." },   ← la del seed
+#     { "id": 2, "precio_anterior": "8500.00", "precio_nuevo": "9000.00",
+#       "usuario_id": 1, "cuando": "..." }    ← la del PATCH
+#   ],
+#   "total": 2, "page": 1, "size": 20, "pages": 1
+# }
+# La línea se insertó en el mismo UoW que el cambio del repuesto (RN-20).
+
+### 8) B-03 — PATCH sin cambio de precio → NO aparece línea nueva (caso C-18)
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+
+{
+  "precio": "9000.00"
+}
+
+# Esperado: 200 con "precio": "9000.00" (no falla).
+# Después, GET /repuestos/1/precios sigue con "total": 2. El precio es idéntico
+# al actual: no hay cambio efectivo y no se escribe historial (RN-20).
+
+### 9) Reposición de stock: 200 con el repuesto actualizado (US-022 CA-1)
+POST {{baseUrl}}/repuestos/3/reponer
+Content-Type: application/json
+
+{
+  "cantidad": 5
+}
+
+# Esperado: 200
+# { "id": 3, "codigo": "BU-003", "descripcion": "Bujía",
+#   "precio": "1500.00", "stock": 7 }
+# El seed deja stock 2; la reposición deja además un `movimiento_stock` con
+# cantidad 5, motivo "Reposición" y el usuario del ADMIN.
+
+### 10) Cantidad de reposición inválida → 422
+POST {{baseUrl}}/repuestos/3/reponer
+Content-Type: application/json
+
+{
+  "cantidad": 0
+}
+
+# Esperado: 422 (el contrato exige `gt=0`). Una entrada de cero no es un
+# movimiento válido (CHECK `cantidad <> 0` en la base).
+
+### 11) Historial de movimientos del repuesto (ADMIN)
+GET {{baseUrl}}/repuestos/3/movimientos?page=1&size=20
+
+# Esperado: 200
+# {
+#   "items": [
+#     { "id": ..., "cantidad": 2, "motivo": "Stock inicial",
+#       "usuario_id": 1, "orden_id": null, "cuando": "..." },
+#     { "id": ..., "cantidad": 5, "motivo": "Reposición",
+#       "usuario_id": 1, "orden_id": null, "cuando": "..." }
+#   ],
+#   "total": 2, "page": 1, "size": 20, "pages": 1
+# }
+# Ordenado por `cuando` e `id`. Con `size=1&page=3` → 422 de paginación.
+
+### 12) Baja lógica: 204, después 404 y el código queda libre (US-021 CA-3)
+DELETE {{baseUrl}}/repuestos/1
+
+# Esperado: 204 sin cuerpo. La fila NO se borra: queda con `borrado_en`.
+
+GET {{baseUrl}}/repuestos/1
+
+# Esperado: 404
+# { "detail": "No existe el repuesto con id 1." }
+
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "FA-001",
+  "descripcion": "Filtro nuevo",
+  "precio": "9000.00"
+}
+
+# Esperado: 201. El índice único parcial sólo mira las filas vigentes, así que
+# el código de un repuesto dado de baja se reutiliza (RN-16).
+
+### 13) B-04 — RECEPCION en un endpoint de ADMIN → 403
+# 1. Login de recepcion@example.com (conservar esa cookie):
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "secreto123"
+}
+
+# 2. Con la cookie de RECEPCION:
+POST {{baseUrl}}/repuestos/3/reponer
+Content-Type: application/json
+
+{
+  "cantidad": 1
+}
+
+# Esperado: 403
+# { "detail": "No tenés permiso para realizar esta operación." }
+# El mismo 403 en POST/PATCH/DELETE /repuestos, /movimientos y /precios.
+# GET /repuestos y GET /repuestos/{id} sí responden 200 con RECEPCION.
+
+### 14) Sin sesión en las rutas de ADMIN → 401
+DELETE {{baseUrl}}/repuestos/3
+
+# Esperado (sin cookie): 401
+# { "detail": "No hay una sesión válida." }
+# El 401 (identidad) se evalúa antes que el 403 (rol).
