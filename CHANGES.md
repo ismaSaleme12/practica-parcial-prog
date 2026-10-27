@@ -242,7 +242,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ---
 
 ### [C-07] `auth`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 4 (US-009 a US-012) — autenticación completa en el módulo `usuarios`
   - `POST /auth/registro` (abierto): crea usuario + `asignacion_rol` CLIENTE + ficha `cliente` en **un solo UoW** (RN-02); hash **antes** de abrir la transacción y fuera del bucle; documento/email repetido → 409 sin apropiarse de la ficha; 201
   - `POST /auth/login` (abierto): **orden** — primero límite de intentos (RN-08): ≥ 5 fallos con mismo `(email, ip)` en 60 s → 429 con `Retry-After` **sin calcular hash**; luego verificación contra el hash del usuario o contra el **hash ficticio** del lifespan si el correo no existe (RN-09 — misma respuesta y duración); cada intento se anota en `intento_acceso` **en sesión y transacciones propias siempre confirmadas** (DD-09, con comentario declarándolo); login correcto emite JWT (`sub`, `iat` sin truncar, `exp`, roles vigentes) en cookie `access_token` HttpOnly, SameSite=Lax, Max-Age = duración, Secure configurable; cuerpo 200 **sin token**: `{mensaje, debe_cambiar_password, expira_en_segundos}`

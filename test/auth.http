@@ -1,0 +1,222 @@
+# Evidencia del change C-07 — autenticación (Épica 4, US-009 a US-012)
+#
+# Requiere la app levantada (uvicorn main:app --reload) y la base migrada + seed.py.
+# Todos los usuarios del seed tienen la contraseña `secreto123`.
+#
+# El JWT viaja SÓLO en la cookie `access_token` (HttpOnly, SameSite=Lax,
+# Max-Age = duración, Secure = COOKIE_SECURE). No se copia a mano ni se manda
+# por `Authorization`: para las peticiones autenticadas alcanza con que el
+# cliente HTTP conserve la cookie que dejó el login.
+#
+# En cada bloque se comenta el código y el cuerpo esperado.
+
+@baseUrl = http://localhost:8000
+
+### 1) Auto-registro OK → 201 (usuario + rol CLIENTE + ficha, RN-02)
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "autoregistro@example.com",
+  "nombre": "Auto Registro",
+  "password": "secreto123",
+  "documento": "40111222",
+  "telefono": "1145550099"
+}
+
+# Esperado: 201
+# { "id": 8, "email": "autoregistro@example.com", "nombre": "Auto Registro",
+#   "activo": true, "debe_cambiar_password": false }
+# Sin `password_hash` (ni `$2b$`) en el cuerpo. El rol CLIENTE no se envía: lo
+# asigna el servicio y `extra="forbid"` rechaza cualquier intento de elegirlo.
+
+### 2) Registro con documento ya usado → 409 y NO se apropia de la ficha (caso C-02)
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "intruso@example.com",
+  "nombre": "Intruso",
+  "password": "secreto123",
+  "documento": "27888999",
+  "telefono": "1145550088"
+}
+
+# Esperado: 409
+# { "detail": "La operación entra en conflicto con datos ya guardados." }
+# 27888999 es el documento de Jorge, cliente del seed SIN usuario. El UoW
+# revierte las tres escrituras: Jorge sigue sin usuario y no queda usuario
+# nuevo ni rol CLIENTE suelto. No hay texto del motor ni nombre del índice.
+
+### 3) Registro con email repetido → 409
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "nombre": "Administrador Repetido",
+  "password": "secreto123",
+  "documento": "40999888",
+  "telefono": "1145550090"
+}
+
+# Esperado: 409 con el mismo mensaje propio. La ficha del documento nuevo NO queda.
+
+### 4) Login OK → 200 SIN token en el cuerpo; el JWT va en Set-Cookie
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200
+# { "mensaje": "Sesión iniciada", "debe_cambiar_password": false,
+#   "expira_en_segundos": 1800 }
+# Set-Cookie: access_token=<jwt>; HttpOnly; Max-Age=1800; Path=/; SameSite=lax
+# El cuerpo NO trae `access_token`: el token sólo vive en la cookie.
+
+### 5) Login con contraseña mala → 401 (mismo cuerpo que correo inexistente)
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "clave-equivocada"
+}
+
+# Esperado: 401
+# { "detail": "Credenciales inválidas." }
+
+### 6) Correo inexistente → 401 IDÉNTICO (hash ficticio, RN-09)
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "no-existe@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 401
+# { "detail": "Credenciales inválidas." }
+# Mismo cuerpo y duración parecida: verifica contra el hash ficticio calculado
+# una sola vez en el lifespan. No se revela qué cuentas existen.
+
+### 7) Cinco fallos con el mismo (email, ip) en 60 s → el sexto es 429 (caso C-05)
+# Repetir 5 veces este bloque con la misma IP:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "mala"
+}
+
+# Esperado en los 5 primeros: 401.
+# Esperado en el sexto:
+# 429
+# Retry-After: <segundos que faltan para que el fallo más antiguo salga de la ventana>
+# { "detail": "Demasiados intentos fallidos. Intentá de nuevo en N segundos." }
+# El límite se evalúa ANTES de calcular o verificar cualquier hash: el 429 no
+# cuesta bcrypt. Un login correcto reinicia la cuenta (los fallos viejos quedan
+# en `intento_acceso` pero dejan de contar).
+
+### 8) Bearer NO autentica (caso C-03)
+GET {{baseUrl}}/auth/yo
+Authorization: Bearer <pegar acá el JWT de la cookie del login>
+
+# Esperado: 401
+# { "detail": "No hay una sesión válida." }
+# `get_usuario_actual` lee SÓLO request.cookies["access_token"]; el header
+# Authorization se ignora. Sin cookie no hay sesión aunque el token sea válido.
+
+### 9) /auth/yo con cookie → 200 (usuario, roles vigentes y roles del token)
+GET {{baseUrl}}/auth/yo
+
+# Esperado: 200
+# {
+#   "usuario": { "id": 1, "email": "admin@example.com", "nombre": "Administrador",
+#                 "activo": true, "debe_cambiar_password": false },
+#   "roles_vigentes": ["ADMIN"],
+#   "roles_token": ["ADMIN"]
+# }
+# `roles_vigentes` se consulta en la base en esta petición; los del token son
+# informativos (RN-04). Sin cookie o con un token vencido → 401.
+
+### 10) Login de nuevo@example.com informa el cambio obligatorio
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "nuevo@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200
+# { "mensaje": "Sesión iniciada", "debe_cambiar_password": true,
+#   "expira_en_segundos": 1800 }
+# El 403 del resto de las rutas mientras el cambio está pendiente es C-08
+# (RN-06 / US-015); esta ruta sigue abierta para poder cambiar la clave.
+
+### 11) Cambio de contraseña OK → 200 con token NUEVO en la cookie
+POST {{baseUrl}}/auth/cambiar-password
+Content-Type: application/json
+
+{
+  "password_actual": "secreto123",
+  "password_nueva": "NuevaClaveSegura2026"
+}
+
+# Esperado: 200
+# { "mensaje": "Contraseña actualizada", "debe_cambiar_password": false,
+#   "expira_en_segundos": 1800 }
+# Set-Cookie con un JWT NUEVO. `password_cambiada_en` queda con hora completa
+# (timestamptz) y el token se emite DESPUÉS del cambio (RN-07).
+
+### 12) El token anterior ya no vale, sin esperar a que venza (caso C-04)
+GET {{baseUrl}}/auth/yo
+Cookie: access_token=<JWT anterior al cambio del bloque 11>
+
+# Esperado: 401
+# { "detail": "No hay una sesión válida." }
+# Comparación de `iat` con `password_cambiada_en` SIN truncar: aunque el token
+# viejo y el cambio sean del mismo segundo, el viejo es anterior y no pasa.
+# El token nuevo del bloque 11 sí pasa (se emitió después).
+
+### 13) Contraseña nueva de 8 bytes o menos → 422 (decisión del Flujo 4)
+POST {{baseUrl}}/auth/cambiar-password
+Content-Type: application/json
+
+{
+  "password_actual": "secreto123",
+  "password_nueva": "12345678"
+}
+
+# Esperado: 422
+# { "detail": "La petición no cumple el contrato.",
+#   "errores": [ { "campo": "body.password_nueva",
+#                  "mensaje": "Value error, La contraseña nueva debe tener más de 8 bytes en UTF-8.",
+#                  "tipo": "value_error" } ] }
+# La lectura literal del Flujo 4 es: válida sólo si mide MÁS de 8 bytes y HASTA
+# 72 bytes en UTF-8 (4 «ñ» son 4 caracteres y 8 bytes → también 422).
+
+### 14) Contraseña nueva de más de 72 bytes → 422 (nunca 500)
+POST {{baseUrl}}/auth/cambiar-password
+Content-Type: application/json
+
+{
+  "password_actual": "secreto123",
+  "password_nueva": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
+# Esperado: 422. bcrypt ≥ 5 rechazaría con excepción una contraseña de 73 bytes:
+# el contrato la corta antes y responde 422, nunca 500.
+
+### 15) Logout → 200 y borra la cookie
+POST {{baseUrl}}/auth/logout
+
+# Esperado: 200
+# { "mensaje": "Sesión cerrada" }
+# Set-Cookie: access_token=""; Max-Age=0; Path=/
+# Después del logout, GET /auth/yo responde 401.

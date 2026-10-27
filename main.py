@@ -1,3 +1,4 @@
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,8 +7,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import registrar_manejadores
+from app.core.security import hash_password
 from app.modules.health.router import router as health_router
 from app.modules.repuestos.router import router as repuestos_router
+from app.modules.usuarios.auth_router import router as auth_router
 from app.modules.usuarios.router import router as usuarios_router
 
 # Registro central de modelos: sin este import, las relaciones que cruzan módulos
@@ -35,6 +38,11 @@ async def lifespan(app: FastAPI):
     app.state.engine = engine
     app.state.session_maker = session_maker
 
+    # Hash ficticio del login (RN-09): se calcula UNA vez, con el costo de la
+    # configuración. Cuando el correo no existe, el login verifica contra este
+    # hash para responder igual y tardar parecido, sin revelar qué cuentas hay.
+    app.state.hash_ficticio = await hash_password(secrets.token_urlsafe(32))
+
     yield
 
     await engine.dispose()
@@ -52,8 +60,16 @@ registrar_manejadores(app)
 
 app.include_router(health_router)
 
+# Autenticación (C-07): router propio del módulo `usuarios`, con prefix `/auth`.
+# Va en el grupo abierto: registro y login no exigen cookie, y `/auth/yo` y el
+# cambio de contraseña la exigen por dentro (`get_usuario_actual`). C-08 lo
+# re-monta junto con `health` en el grupo abierto y mueve `usuarios`/`repuestos`
+# al grupo protegido, con el control de `debe_cambiar_password` montado una vez
+# (DD-05 / US-015 CA-1).
+app.include_router(auth_router)
+
 # Routers de prototipo de C-06 (contratos y errores). Todavía en abierto porque
-# C-07/C-08 aún no existen: C-08 los re-monta en el grupo protegido y agrega
+# C-08 aún no existe: C-08 los re-monta en el grupo protegido y agrega
 # requiere_rol. Hasta entonces POST /usuarios y POST /repuestos son públicos.
 app.include_router(usuarios_router)
 app.include_router(repuestos_router)
