@@ -174,7 +174,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ---
 
 ### [C-04] `migrations-and-seed`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 2 (US-006) — esquema versionado sólo con Alembic + datos iniciales
   - Alembic con **plantilla asincrónica**; `create_all` prohibido
   - **Migración 1** generada con `--autogenerate`: las 13 tablas, índices, UNIQUEs, CHECKs e índices únicos parciales (`postgresql_where`); el catálogo `estado_orden` queda **vacío**

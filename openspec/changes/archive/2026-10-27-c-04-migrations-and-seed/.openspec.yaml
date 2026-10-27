@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-27
+goal: Esquema versionado solo con Alembic (13 tablas + disparadores de solo
+  agregado) y seed.py con los datos iniciales
