@@ -57,11 +57,11 @@ La fuente de verdad del dominio vive en `knowledge-base/`. **Leé el archivo rel
 | **QA / Tests** | Infra pytest, suite incremental, casos C-01..C-19 | `tdd`, `code-review`, `supabase-postgres-best-practices` |
 | **Orquestación** | SDD / OPSX / docs | `kb-creator`, `roadmap-generator`, `agents-md-generator`, `discovery-research`, `web-scraper`, `skill-creator` |
 
-> **Pendiente de instalar** (recomendadas por `find-skill`, aún NO instaladas — no contar con ellas hasta que el usuario las instale): `fastapi`, `fastapi-patterns`, `sqlalchemy-alembic-expert`, `postgresql-table-design`, `database-migrations`. Mientras tanto, las skills locales de arriba cubren esos frentes.
+> **Instaladas localmente en `.agents/skills/`**: `fastapi`, `fastapi-patterns`, `supabase-postgres-best-practices`. (Otras pendientes de requerir).
 
 Cargá la skill correspondiente al contexto ANTES de escribir código.
 
-> Los compact rules de cada skill los resuelve el orquestador desde `.atl/skill-registry.md` (generado por `skill-registry`; no versionado — no está en el repo). Esta tabla solo mapea skill→rol.
+> Los compact rules de cada skill los resuelve el orquestador desde `.agents/skill-registry.md` (generado por `skill-registry`, versionado en el repo). Esta tabla solo mapea skill→rol.
 
 ---
 
