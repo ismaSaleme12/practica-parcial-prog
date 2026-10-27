@@ -11,6 +11,11 @@ Reglas duras que este módulo implementa:
   los repositorios de cada módulo con ``selectinload``/``joinedload`` y un
   número fijo de consultas.
 - **Sin SQL concatenado**: todos los filtros viajan como expresiones ligadas.
+
+**Ojo con `select`**: se importa de **SQLModel**, no de SQLAlchemy. Con
+`session.exec(...)`, el `select` de SQLModel devuelve instancias del modelo;
+el de SQLAlchemy devuelve `Row` y los atributos de la entidad dejan de existir
+(``AttributeError: nombre``) sin ningún error de tipos.
 """
 
 from __future__ import annotations
@@ -18,8 +23,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Generic, Sequence, TypeVar
 
-from sqlalchemy import ColumnElement, func, select
-from sqlmodel import SQLModel
+from sqlalchemy import ColumnElement, func
+from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.paginacion import Page, PageParams

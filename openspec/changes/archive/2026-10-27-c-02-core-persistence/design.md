@@ -91,6 +91,7 @@ Restricciones que condicionan el diseño:
 - **`greenlet` faltaba en `requirements.txt`** → desde SQLAlchemy 2.1 el módulo asíncrono no se puede importar sin él; se corrigió a `sqlalchemy[asyncio]` en este change (extra oficial, no una dependencia nueva del stack) y se documentó en las notas de `C-01`.
 - **El nombre del status 422 cambió en Starlette** (`UNPROCESSABLE_ENTITY` → `UNPROCESSABLE_CONTENT`) → `paginacion.py` usa el literal `422` para no quedar atado a ninguna versión y no emitir `DeprecationWarning` en la más nueva.
 - **`SECRET_KEY` corta** → PyJWT advierte por debajo de 32 bytes (RFC 7518); `env.example` lo deja explícito y la clave sigue siendo obligatoria, sin default.
+- **`select` de SQLAlchemy con `session.exec` devuelve `Row`, no el modelo** → apareció al verificar contra PostgreSQL real (`AttributeError: nombre`): `exec` decide por el tipo de sentencia, y sólo el `select` de SQLModel produce `SelectOfScalar`. `repository.py` importa `select` de **SQLModel** y la regla quedó como restricción dura en `AGENTS.md`/`CLAUDE.md`.
 
 ## Migration Plan
 
