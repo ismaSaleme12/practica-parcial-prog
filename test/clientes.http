@@ -1,0 +1,258 @@
+# Evidencia del change C-09 — clientes y vehículos (Épica 6, US-017 a US-019).
+#
+# Requiere la app levantada (uvicorn main:app --reload) y la base migrada + seed.py.
+# Todos los usuarios del seed tienen la contraseña `secreto123`.
+#
+# Rutas en el grupo PROTEGIDO (main.py): exigen sesión (401 sin cookie) y que el
+# cambio obligatorio de contraseña no esté pendiente (403). Encima, cada ruta
+# decide el rol con `requiere_rol` consultando la base en cada petición (RN-04):
+#   - POST /clientes, GET /clientes/{id}, POST /clientes/{id}/vehiculos,
+#     DELETE /vehiculos/{id}  → ADMIN o RECEPCION
+#   - GET /mis-vehiculos      → cualquier sesión válida (RN-17, sin requiere_rol)
+#
+# Estado del seed que usa esta evidencia:
+#   clientes:  1 = Laura (usuario cliente@example.com), 2 = Jorge (sin usuario)
+#   vehículos: 1 = AAA111 (Laura, con orden PENDIENTE), 2 = AAB222 (Laura, sin
+#              órdenes), 3 = BBB333 (Jorge, con orden EN_REPARACION).
+#
+# En cada bloque se comenta el código y el cuerpo esperado.
+
+@baseUrl = http://localhost:8000
+@password = secreto123
+
+### 0) Login de RECEPCIÓN: sin sesión no hay 200 en este módulo
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200 y la cookie `access_token` (el token NO viaja en el cuerpo).
+# Conserve la cookie para los bloques siguientes.
+# Sin cookie, POST /clientes, GET /clientes/1, POST /clientes/1/vehiculos y
+# DELETE /vehiculos/1 responden 401:
+# { "detail": "No hay una sesión válida." }
+
+### 1) Alta de cliente → 201
+POST {{baseUrl}}/clientes
+Content-Type: application/json
+
+{
+  "nombre": "Carlos Pérez",
+  "documento": "33444555",
+  "telefono": "1145550003"
+}
+
+# Esperado: 201
+# { "id": 3, "nombre": "Carlos Pérez", "documento": "33444555",
+#   "telefono": "1145550003" }
+# El alta devuelve la ficha plana: los vehículos se consultan en GET /clientes/{id}.
+
+### 2) Documento repetido → 409 (UNIQUE de la base, sin consulta previa)
+POST {{baseUrl}}/clientes
+Content-Type: application/json
+
+{
+  "nombre": "Otro Carlos",
+  "documento": "33444555",
+  "telefono": "1145550009"
+}
+
+# Esperado: 409
+# { "detail": "La operación entra en conflicto con datos ya guardados." }
+# Sin texto del motor ni nombre del índice (RN-18).
+
+### 3) Alta de vehículo del cliente → 201
+POST {{baseUrl}}/clientes/3/vehiculos
+Content-Type: application/json
+
+{
+  "patente": "CCC444",
+  "marca": "Chevrolet",
+  "modelo": "Onix",
+  "anio": 2022
+}
+
+# Esperado: 201
+# { "id": 4, "cliente_id": 3, "patente": "CCC444", "marca": "Chevrolet",
+#   "modelo": "Onix", "anio": 2022 }
+
+### 4) Patente VIGENTE duplicada → 409 (índice único parcial)
+POST {{baseUrl}}/clientes/1/vehiculos
+Content-Type: application/json
+
+{
+  "patente": "AAA111",
+  "marca": "Fiat",
+  "modelo": "Uno",
+  "anio": 2015
+}
+
+# Esperado: 409
+# El índice es `(patente) WHERE borrado_en IS NULL`: AAA111 está vigente en el
+# vehículo 1. No hay SELECT de unicidad; choca el INSERT y el handler traduce.
+
+### 5) Ficha del cliente con sus vehículos (carga anticipada) → 200
+GET {{baseUrl}}/clientes/1
+
+# Esperado: 200
+# { "id": 1, "nombre": "Laura", "documento": "30111222",
+#   "telefono": "1145550001",
+#   "vehiculos": [
+#     { "id": 1, "cliente_id": 1, "patente": "AAA111", "marca": "Fiat",
+#       "modelo": "Uno", "anio": 2015 },
+#     { "id": 2, "cliente_id": 1, "patente": "AAB222", "marca": "Renault",
+#       "modelo": "Clio", "anio": 2018 } ] }
+# Las relaciones usan lazy="raise_on_sql": la respuesta incluye los vehículos
+# porque el repositorio los precarga con selectinload (sin carga perezosa).
+
+### 6) Cliente inexistente → 404 (ficha y alta de vehículo)
+GET {{baseUrl}}/clientes/999999
+
+# Esperado: 404
+# { "detail": "No existe el cliente con id 999999." }
+
+POST {{baseUrl}}/clientes/999999/vehiculos
+Content-Type: application/json
+
+{
+  "patente": "GGG888",
+  "marca": "Fiat",
+  "modelo": "Cronos",
+  "anio": 2021
+}
+
+# Esperado: 404 y ninguna fila escrita (la excepción revierte el UoW).
+
+### 7) Año fuera de rango → 422 (contrato, no 409 de integridad)
+POST {{baseUrl}}/clientes/2/vehiculos
+Content-Type: application/json
+
+{
+  "patente": "DDD555",
+  "marca": "Ford",
+  "modelo": "Ka",
+  "anio": 1949
+}
+
+# Esperado: 422
+# { "detail": "La petición no cumple el contrato.",
+#   "errores": [ { "campo": "body.anio", "mensaje": "...", ... } ] }
+# Mismos límites que el CHECK `anio BETWEEN 1950 AND 2100`: 1949 y 2101 son 422.
+
+### 8) Baja de un vehículo con orden ABIERTA → 409 (RN-16)
+DELETE {{baseUrl}}/vehiculos/1
+
+# Esperado: 409
+# { "detail": "El vehículo tiene órdenes abiertas: no se puede dar de baja." }
+# La orden 1 está PENDIENTE (estado_orden.es_final = false). La comprobación
+# corre antes de escribir: el vehículo queda con borrado_en NULL.
+# Lo mismo para el vehículo 3 (Jorge), con la orden 2 EN_REPARACION:
+DELETE {{baseUrl}}/vehiculos/3
+
+# Esperado: 409
+
+### 9) Patente repetida DESPUÉS de la baja → 201 (caso C-19)
+# El vehículo 2 (AAB222) no tiene órdenes: la baja lógica procede.
+DELETE {{baseUrl}}/vehiculos/2
+
+# Esperado: 204 sin cuerpo. La fila sigue en `vehiculo` con `borrado_en` escrito
+# y deja de aparecer en la ficha:
+GET {{baseUrl}}/clientes/1
+
+# Esperado: 200 con un solo vehículo (AAA111).
+
+# Ahora la MISMA patente se puede volver a registrar (C-19): el índice único
+# parcial sólo mira los vigentes.
+POST {{baseUrl}}/clientes/1/vehiculos
+Content-Type: application/json
+
+{
+  "patente": "AAB222",
+  "marca": "Renault",
+  "modelo": "Clio",
+  "anio": 2019
+}
+
+# Esperado: 201
+# { "id": 5, "cliente_id": 1, "patente": "AAB222", ... }
+# La ficha vuelve a mostrar dos vehículos, y el que aparece es el NUEVO (id 5),
+# no el dado de baja (id 2):
+GET {{baseUrl}}/clientes/1
+
+# Esperado: 200 con AAA111 (id 1) y AAB222 (id 5).
+
+# Mientras haya una patente vigente igual, el alta vuelve a ser 409:
+POST {{baseUrl}}/clientes/1/vehiculos
+Content-Type: application/json
+
+{
+  "patente": "AAB222",
+  "marca": "Renault",
+  "modelo": "Clio",
+  "anio": 2020
+}
+
+# Esperado: 409
+# Una segunda baja del mismo vehículo ya dado de baja es 404 (no hay nada vigente):
+DELETE {{baseUrl}}/vehiculos/2
+
+# Esperado: 404
+
+### 10) Lo propio: /mis-vehiculos sólo devuelve los de la sesión (RN-17)
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200. Conservando la cookie de Laura:
+GET {{baseUrl}}/mis-vehiculos
+
+# Esperado: 200 con SUS vehículos: AAA111 (id 1) y AAB222 (id 5).
+# NO aparece BBB333 (vehículo 3): es de Jorge, otro cliente.
+# La ruta sólo pide estar autenticado: no lleva requiere_rol.
+
+# Con una cuenta SIN ficha de cliente (recepción o admin) la lista es vacía,
+# no 404 ni 500:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "secreto123"
+}
+
+GET {{baseUrl}}/mis-vehiculos
+
+# Esperado: 200
+# []
+
+# Sin cookie:
+GET {{baseUrl}}/mis-vehiculos
+
+# Esperado: 401 (sin la cookie del login anterior)
+# { "detail": "No hay una sesión válida." }
+
+### 11) Matriz de permisos: MECANICO y CLIENTE no administran la cartera
+# Con sesión de recepcion@example.com las cuatro rutas están permitidas
+# (201/200/201/204 según el bloque). Con MECANICO o CLIENTE la respuesta es 403
+# (sesión válida, sin permiso):
+POST {{baseUrl}}/clientes
+Content-Type: application/json
+
+{
+  "nombre": "Sin Permiso",
+  "documento": "11111111",
+  "telefono": "1145550000"
+}
+
+# Esperado con RECEPCION o ADMIN: 201.
+# Esperado con MECANICO o CLIENTE: 403
+# { "detail": "No tenés permiso para realizar esta operación." }
+# El mismo 403 para GET /clientes/1, POST /clientes/1/vehiculos y
+# DELETE /vehiculos/2.

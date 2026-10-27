@@ -9,6 +9,9 @@ from app.core.config import settings
 from app.core.dependencies import exigir_password_al_dia
 from app.core.errors import registrar_manejadores
 from app.core.security import hash_password
+from app.modules.clientes.router import propios_router as clientes_propios_router
+from app.modules.clientes.router import router as clientes_router
+from app.modules.clientes.router import vehiculos_router
 from app.modules.health.router import router as health_router
 from app.modules.repuestos.router import router as repuestos_router
 from app.modules.usuarios.auth_router import router as auth_router
@@ -83,6 +86,9 @@ grupo_abierto.include_router(auth_router)
 grupo_protegido.include_router(usuarios_router)
 grupo_protegido.include_router(eventos_router)
 grupo_protegido.include_router(repuestos_router)
+grupo_protegido.include_router(clientes_router)
+grupo_protegido.include_router(vehiculos_router)
+grupo_protegido.include_router(clientes_propios_router)
 
 app.include_router(grupo_abierto)
 app.include_router(grupo_protegido)

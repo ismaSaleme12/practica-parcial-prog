@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-10-27
+goal: 'Módulo clientes completo (US-017 a US-019): alta de clientes con documento único, ficha con vehículos por carga anticipada, alta de vehículos con patente única entre vigentes y año validado, baja lógica bloqueada por órdenes abiertas, reutilización de la patente tras la baja y /mis-vehiculos acotado al dueño de la sesión (RN-01, RN-16, RN-17)'
