@@ -26,7 +26,10 @@ def test_la_app_se_importa_desde_la_raiz() -> None:
 
 def test_las_variables_de_test_ganan_sobre_el_entorno_local() -> None:
     """Las variables del andén se fijan antes de importar la app."""
-    assert settings.POSTGRES_DB == "taller_mecanico_test"
+    # El nombre exacto puede variar (``TEST_POSTGRES_DB`` permite correr dos
+    # suites en paralelo), pero nunca puede ser la base de desarrollo.
+    assert settings.POSTGRES_DB != "taller_mecanico"
+    assert settings.POSTGRES_DB.startswith("taller_mecanico_")
     assert settings.COOKIE_SECURE is False
     assert settings.SQL_ECHO is False
 

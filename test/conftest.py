@@ -11,6 +11,9 @@ Reglas del andén:
 - Todo vive dentro de ``test/``; la estructura obligatoria de la raíz no cambia.
 - La suite corre contra **PostgreSQL real** (sin sqlite, sin repositorios falsos,
   sin testcontainers): lo que la consigna pide probar es la base de verdad.
+- La base se llama ``taller_mecanico_test``. ``TEST_POSTGRES_DB`` permite usar
+  otra (por ejemplo ``taller_mecanico_c09``) para correr dos suites en paralelo
+  sin que los ``TRUNCATE`` de una pisen a la otra.
 - Cada test arranca del estado conocido que deja ``seed.py`` (vacía y recarga).
 - La app se ejercita con ``httpx.AsyncClient`` + ``ASGITransport`` y su lifespan
   real (``app.router.lifespan_context``), sin ``TestClient`` síncrono y sin la
@@ -33,7 +36,7 @@ RAIZ_REPO = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 # 1. Variables de test, ANTES de importar cualquier módulo de la aplicación.
 # ---------------------------------------------------------------------------
-NOMBRE_BASE_TEST = "taller_mecanico_test"
+NOMBRE_BASE_TEST = os.environ.get("TEST_POSTGRES_DB", "taller_mecanico_test")
 PASSWORD_SEED = "secreto123"  # la misma que carga seed.py para los 7 usuarios
 
 os.environ["POSTGRES_DB"] = NOMBRE_BASE_TEST
