@@ -1,12 +1,33 @@
 # Evidencia del change C-06 — contratos y manejo de errores
 #
 # Requiere la app levantada (uvicorn main:app --reload) y la base migrada + seed.py.
-# Los usuarios del seed tienen la contraseña `secreto123` (no se usan acá: todavía
-# no hay autenticación; C-07/C-08 la agregan).
+# Todos los usuarios del seed tienen la contraseña `secreto123`.
+#
+# Los endpoints de este archivo viven en el grupo PROTEGIDO (desde C-08): hay que
+# loguearse primero y conservar la cookie `access_token` que deja el login. El
+# bloque 0 deja la sesión de ADMIN abierta para el resto de los bloques.
+# `GET /repuestos` acepta ADMIN/RECEPCION/MECANICO; `POST /repuestos` y
+# `POST /usuarios` son sólo ADMIN.
 #
 # En cada bloque se comenta el código y el cuerpo esperado.
 
 @baseUrl = http://localhost:8000
+@password = secreto123
+
+### 0) Login de ADMIN: deja la cookie `access_token` para los bloques siguientes
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200
+# { "mensaje": "Sesión iniciada", "debe_cambiar_password": false,
+#   "expira_en_segundos": 1800 }
+# El token NO viaja en el cuerpo: va en la cookie HttpOnly.
+# Sin este bloque, todo lo de abajo responde 401 ("No hay una sesión válida.").
 
 ### 1) Listado paginado: envoltorio uniforme y dinero como string
 GET {{baseUrl}}/repuestos?size=2

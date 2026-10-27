@@ -125,6 +125,9 @@ Son contrato; romperlas es un defecto. Formato `NUNCA X → hacer Y`:
 3. /opsx:propose C-NN-nombre                     → proposal + design + specs + tasks
 4. Implementar las tasks (cargando skills)       → respetando las reglas duras
 5. /opsx:archive C-NN-nombre + marcar [x]        → cerrar el change
+6. Actualizar README.md                          → documento vivo: §Estado del proyecto,
+                                                   tabla de endpoints, contador de pruebas
+                                                   y deuda conocida
 ```
 
 Aplicar TODAS las reglas duras en cada paso. Ante conflicto entre la KB y este archivo, las reglas duras prevalecen.
