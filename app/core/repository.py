@@ -41,6 +41,11 @@ class BaseRepository(Generic[ModelT]):
     Recibe la sesión y la **clase del modelo**; nunca crea sesiones ni confirma.
     """
 
+    # Orden determinista de los listados paginados (vacío = sin ORDER BY).
+    # Sin orden, dos páginas consecutivas pueden repetir u omitir filas. Cada
+    # repositorio concreto declara el suyo (clave única o columna estable).
+    _orden_por: tuple[Any, ...] = ()
+
     def __init__(self, session: AsyncSession, model: type[ModelT]) -> None:
         self.session = session
         self.model = model
@@ -87,6 +92,8 @@ class BaseRepository(Generic[ModelT]):
         todos = self._filtros(filtros)
         if todos:
             statement = statement.where(*todos)
+        if self._orden_por:
+            statement = statement.order_by(*self._orden_por)
         statement = statement.offset(params.offset).limit(params.size)
         items = (await self.session.exec(statement)).all()
 

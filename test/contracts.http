@@ -1,0 +1,218 @@
+# Evidencia del change C-06 — contratos y manejo de errores
+#
+# Requiere la app levantada (uvicorn main:app --reload) y la base migrada + seed.py.
+# Los usuarios del seed tienen la contraseña `secreto123` (no se usan acá: todavía
+# no hay autenticación; C-07/C-08 la agregan).
+#
+# En cada bloque se comenta el código y el cuerpo esperado.
+
+@baseUrl = http://localhost:8000
+
+### 1) Listado paginado: envoltorio uniforme y dinero como string
+GET {{baseUrl}}/repuestos?size=2
+
+# Esperado: 200
+# {
+#   "items": [
+#     { "id": 1, "codigo": "FA-001", "descripcion": "Filtro de aceite", "precio": "8500.00", "stock": 10 },
+#     { "id": 2, "codigo": "PF-002", "descripcion": "Pastillas de freno", "precio": "12000.00", "stock": 4 }
+#   ],
+#   "total": 4, "page": 1, "size": 2, "pages": 2
+# }
+# El precio es STRING con dos decimales: nunca un número ni un float.
+
+### 2) Página fuera de rango → 422 con mensaje propio
+GET {{baseUrl}}/repuestos?page=3&size=2
+
+# Esperado: 422
+# { "detail": "La página 3 no existe: hay 2." }
+
+### 3) Parámetros de paginación inválidos → 422
+GET {{baseUrl}}/repuestos?page=0&size=2
+
+# Esperado: 422
+# { "detail": "El número de página debe ser mayor o igual a 1." }
+
+### 4) size fuera de rango → 422
+GET {{baseUrl}}/repuestos?size=101
+
+# Esperado: 422
+# { "detail": "El tamaño de página debe estar entre 1 y 100." }
+
+### 5) Búsqueda con parámetro ligado (caso C-16, parte SQL)
+GET {{baseUrl}}/repuestos?q=' OR '1'='1
+
+# Esperado: 200 con la lista vacía; la comilla viaja como VALOR del parámetro:
+# { "items": [], "total": 0, "page": 1, "size": 20, "pages": 0 }
+
+### 6) Búsqueda por descripción
+GET {{baseUrl}}/repuestos?q=Filtro
+
+# Esperado: 200 con un item (Filtro de aceite) y total 1.
+
+### 7) extra="forbid": el stock no se declara en el alta → 422
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "ZZ-999",
+  "descripcion": "Repuesto de prueba",
+  "precio": "1000.00",
+  "stock": 5
+}
+
+# Esperado: 422
+# {
+#   "detail": "La petición no cumple el contrato.",
+#   "errores": [ { "campo": "body.stock", "mensaje": "Extra inputs are not permitted", "tipo": "extra_forbidden" } ]
+# }
+# El repuesto NO se crea.
+
+### 8) Alta válida de repuesto → 201 con precio string y stock 0
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "ZZ-999",
+  "descripcion": "Repuesto de prueba",
+  "precio": "1000.00"
+}
+
+# Esperado: 201
+# { "id": 5, "codigo": "ZZ-999", "descripcion": "Repuesto de prueba", "precio": "1000.00", "stock": 0 }
+# El stock nace en 0: sólo cambia por movimientos (RN-14); el stock inicial llega en C-10.
+
+### 9) Código repetido → 409 con mensaje propio (RN-18)
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "FA-001",
+  "descripcion": "Otro filtro",
+  "precio": "9999.00"
+}
+
+# Esperado: 409
+# { "detail": "La operación entra en conflicto con datos ya guardados." }
+# NO aparece el texto de PostgreSQL (`duplicate key`), ni el nombre del índice, ni el código.
+
+### 10) Precio inválido (cero) → 422
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "ZZ-998",
+  "descripcion": "Repuesto inválido",
+  "precio": "0.00"
+}
+
+# Esperado: 422 con "La petición no cumple el contrato." y el campo `body.precio`.
+
+### 11) Detalle existente → 200
+GET {{baseUrl}}/repuestos/1
+
+# Esperado: 200 con precio string.
+# { "id": 1, "codigo": "FA-001", "descripcion": "Filtro de aceite", "precio": "8500.00", "stock": 10 }
+
+### 12) Recurso de la ruta inexistente → 404 con mensaje propio
+GET {{baseUrl}}/repuestos/999999
+
+# Esperado: 404
+# { "detail": "No existe el repuesto con id 999999." }
+
+### 13) Ruta inexistente → 404 con mensaje propio (sin traza)
+GET {{baseUrl}}/ruta-que-no-existe
+
+# Esperado: 404
+# { "detail": "La ruta solicitada no existe." }
+
+### 14) extra="forbid" en usuarios: rol y password_hash no se aceptan → 422
+POST {{baseUrl}}/usuarios
+Content-Type: application/json
+
+{
+  "email": "nuevo-staff@example.com",
+  "nombre": "Nuevo Staff",
+  "password": "secreto123",
+  "rol": "ADMIN",
+  "password_hash": "x"
+}
+
+# Esperado: 422
+# {
+#   "detail": "La petición no cumple el contrato.",
+#   "errores": [
+#     { "campo": "body.password_hash", "mensaje": "Extra inputs are not permitted", "tipo": "extra_forbidden" },
+#     { "campo": "body.rol", "mensaje": "Extra inputs are not permitted", "tipo": "extra_forbidden" }
+#   ]
+# }
+
+### 15) Contraseña de más de 72 bytes → 422 (nunca 500)
+POST {{baseUrl}}/usuarios
+Content-Type: application/json
+
+{
+  "email": "clave-larga@example.com",
+  "nombre": "Clave Larga",
+  "password": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
+# 73 caracteres 'a' = 73 bytes.
+# Esperado: 422
+# {
+#   "detail": "La petición no cumple el contrato.",
+#   "errores": [ { "campo": "body.password", "mensaje": "La contraseña no puede superar los 72 bytes en UTF-8.", "tipo": "value_error" } ]
+# }
+
+### 16) Contraseña multibyte: 37 «ñ» = 74 bytes → 422
+POST {{baseUrl}}/usuarios
+Content-Type: application/json
+
+{
+  "email": "clave-multibyte@example.com",
+  "nombre": "Clave Multibyte",
+  "password": "ñññññññññññññññññññññññññññññññññññññ"
+}
+
+# Esperado: 422 (el límite es por BYTES, no por caracteres: 37 caracteres, 74 bytes).
+
+### 17) Alta válida de usuario → 201 sin password_hash
+POST {{baseUrl}}/usuarios
+Content-Type: application/json
+
+{
+  "email": "nuevo-staff@example.com",
+  "nombre": "Nuevo Staff",
+  "password": "secreto123"
+}
+
+# Esperado: 201
+# { "id": 8, "email": "nuevo-staff@example.com", "nombre": "Nuevo Staff",
+#   "activo": true, "debe_cambiar_password": true }
+# NO aparece `password_hash` en ninguna parte del cuerpo.
+
+### 18) Email repetido → 409 con mensaje propio
+POST {{baseUrl}}/usuarios
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "nombre": "Administrador Repetido",
+  "password": "secreto123"
+}
+
+# Esperado: 409
+# { "detail": "La operación entra en conflicto con datos ya guardados." }
+# NO aparece el texto de PostgreSQL ni el nombre de la restricción.
+
+### 19) Email con formato inválido → 422
+POST {{baseUrl}}/usuarios
+Content-Type: application/json
+
+{
+  "email": "no-es-un-email",
+  "nombre": "Sin Arroba",
+  "password": "secreto123"
+}
+
+# Esperado: 422 con el campo `body.email` en `errores`.

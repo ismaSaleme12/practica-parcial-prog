@@ -196,7 +196,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 > **Addito sobre la consigna**: el PDF sólo pide `.http` y `solo_agregado.sql` en `test/`. Este change instala el framework que los changes siguientes usan para **automatizar/replicar** esa misma cobertura. Corre en paralelo con `C-06` desde GATE 4 (C-06 no depende de C-05 en su código; sí en sus tests pytest).
 
 ### [C-05] `test-infrastructure`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Framework de tests automatizados para el stack asincrónico — pytest + pytest-asyncio + httpx (decisión delegada por el usuario; el trío es el estándar del ecosistema FastAPI asincrónico)
   - `requirements.txt`: bloque `# --- testing (adicional a la consigna) ---` con `pytest>=8`, `pytest-asyncio>=0.24`, `httpx>=0.27` — **única** adición al stack cerrado del PDF (sigue sin Redis, sin Docker, sin ORM alternativo, sin mocks ni DB-fakes; la suite corre contra **PostgreSQL 16 real** porque la consigna quiere probar la base de verdad)
   - `test/pytest.ini` — todo vive dentro de `test/`, la estructura obligatoria de la raíz **no cambia**: `asyncio_mode = auto`, `pythonpath = .` (nativo de pytest ≥7, sin plugins extra), `testpaths`; corrida estándar `python -m pytest test/` desde la raíz
@@ -222,7 +222,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 > GATE 4: `C-06` y `C-05` se ejecutan en paralelo; `C-07` exige ambas ramas (código de contratos + andén de tests).
 
 ### [C-06] `contracts-and-errors`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 3 (US-007, US-008) — patrones de contratos y manejo de errores, aplicados a los contratos base de `usuarios` y `repuestos`
   - `app/modules/usuarios/schemas.py` y `app/modules/repuestos/schemas.py`: contratos de entrada con `extra="forbid"`; ninguna respuesta incluye `password_hash`; campos de dinero como string Decimal; contraseñas con límite **≤ 72 bytes** validado en contrato (422, no 500)
   - Convención de PATCH: `exclude_unset` — sólo cambia lo enviado
