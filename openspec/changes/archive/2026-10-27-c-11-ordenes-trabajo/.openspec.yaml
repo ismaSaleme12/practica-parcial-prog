@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-10-27
+goal: 'Módulo órdenes de trabajo completo (US-023 a US-026): alta PENDIENTE con precio copiado y total Decimal, iniciar/terminar/cancelar con identidad antes que estado, terminación como una única transacción que descuenta stock y deja un movimiento por ítem con rollback total ante faltante, catálogo de estados de sólo lectura y consultas de lo propio (RN-10 a RN-13, RN-17, RN-19, SU-04)'

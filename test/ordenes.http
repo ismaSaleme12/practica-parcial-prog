@@ -1,0 +1,530 @@
+# Evidencia del change C-11 — órdenes de trabajo
+# (Épica 8, US-023 a US-026; casos C-06, C-09, C-10, C-11, C-12, C-13 y SU-04).
+#
+# Requiere la app levantada (uvicorn main:app --reload) y la base migrada + seed.py.
+# Todos los usuarios del seed tienen la contraseña `secreto123`.
+#
+# Sobre la nomenclatura del enunciado: el PDF **no** etiqueta los casos de esta
+# épica como A-01..A-04; los numera C-10 (alta con 2 ítems), C-11 (stock
+# insuficiente), C-12 (aviso al terminar) y C-13 (cancelar una terminada). Este
+# archivo conserva esa numeración y agrega el alias A-0x que pedía el roadmap:
+#   A-01 → alta de orden con 2 ítems y total calculado (US-023 / C-10)
+#   A-02 → terminar con stock insuficiente: 409 y rollback total (C-11)
+#   A-03 → terminar con stock suficiente y aviso post-confirmación (C-12)
+#   A-04 → cancelar: dueño/personal 200, ajena 403, terminada 409 (C-13)
+#
+# Reglas que ordena esta evidencia:
+#   - El precio y el total los calcula el servidor (RN-10); el cuerpo sólo lleva
+#     `vehiculo_id`, `falla` e `items`. Inyectar `total`, `estado` o
+#     `precio_unitario` es 422.
+#   - La orden nace PENDIENTE y deja su primera línea de historial (RN-15).
+#   - Terminar es **una** transacción: valida todos los stock antes de escribir,
+#     descuenta cada ítem y deja un movimiento negativo por ítem (RN-13/RN-14).
+#   - La identidad (403) se evalúa **antes** que el estado (409) en `terminar` y
+#     `cancelar` (SU-04).
+#   - El aviso al cliente se agenda con `BackgroundTasks` **después** del commit
+#     y sólo si la transición se confirmó (C-12 / DD-13).
+#
+# Identificadores del seed (RESTART IDENTITY):
+#   usuarios: admin 1, admin2 2, recepción 3, mecánico 4, mecánico2 5,
+#             cliente/Laura 6, nuevo 7
+#   vehículos: 1 AAA111 (Laura), 2 AAB222 (Laura), 3 BBB333 (Jorge)
+#   repuestos: 1 FA-001 (8500.00, stock 10), 2 PF-002 (12000.00, stock 4),
+#              3 BU-003 (1500.00, stock 2), 4 AC-004 (2500.00, stock 20)
+#   órdenes: 1 PENDIENTE de AAA111 y 2 EN_REPARACION de BBB333, mecánico 4,
+#            con 4 × BU-003 (total 6000.00).
+
+@baseUrl = http://localhost:8000
+@password = secreto123
+
+### 0) Login de RECEPCION: todas las rutas están en el grupo protegido
+# Sin cookie, cualquier ruta del módulo responde 401 (no 403).
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200 con la cookie `access_token` (HttpOnly). Se conserva para los
+# bloques siguientes.
+
+### 1) Catálogo de estados: por posición y con los finales marcados (C-17)
+GET {{baseUrl}}/estados-orden
+
+# Esperado: 200 (array, no envoltorio)
+# [
+#   { "codigo": "PENDIENTE",     "descripcion": "Pendiente de reparación", "posicion": 1, "es_final": false },
+#   { "codigo": "EN_REPARACION", "descripcion": "En reparación",          "posicion": 2, "es_final": false },
+#   { "codigo": "TERMINADA",     "descripcion": "Terminada",              "posicion": 3, "es_final": true  },
+#   { "codigo": "CANCELADA",     "descripcion": "Cancelada",              "posicion": 4, "es_final": true  }
+# ]
+# Es un repositorio de sólo lectura (DD-07): la API nunca escribe el catálogo.
+
+### 2) Listado paginado: la más reciente primero (US-024)
+GET {{baseUrl}}/ordenes?page=1&size=20
+
+# Esperado: 200
+# {
+#   "items": [
+#     { "id": 2, "vehiculo_id": 3, "patente": "BBB333", "estado": "EN_REPARACION",
+#       "falla": "Cambio de bujías", "total": "6000.00", "mecanico_id": 4, ... },
+#     { "id": 1, "vehiculo_id": 1, "patente": "AAA111", "estado": "PENDIENTE",
+#       "falla": "Ruido en el motor al acelerar", "total": "0.00", "mecanico_id": null, ... }
+#   ],
+#   "total": 2, "page": 1, "size": 20, "pages": 1
+# }
+# El dinero viaja como string Decimal, nunca como número.
+
+### 3) Filtro por estado declarado
+GET {{baseUrl}}/ordenes?estado=PENDIENTE
+
+# Esperado: 200 con `total: 1` y la orden 1.
+
+### 4) Estado no declarado → 422 (caso C-17)
+GET {{baseUrl}}/ordenes?estado=INVENTADO
+
+# Esperado: 422
+# { "detail": "La petición no cumple el contrato.",
+#   "errores": [ { "campo": "estado", ... } ] }
+# El filtro se valida contra el enum del contrato antes de tocar la base.
+
+### 5) Página fuera de rango → 422
+GET {{baseUrl}}/ordenes?page=9&size=1
+
+# Esperado: 422
+# { "detail": "La página 9 no existe: hay 2." }
+
+### 6) Detalle completo: vehículo, cliente, ítems con subtotal e historial (US-025)
+GET {{baseUrl}}/ordenes/2
+
+# Esperado: 200
+# {
+#   "id": 2, "vehiculo_id": 3, "patente": "BBB333",
+#   "estado": "EN_REPARACION", "falla": "Cambio de bujías",
+#   "creada_en": "...", "total": "6000.00", "mecanico_id": 4, "cliente": "Jorge",
+#   "items": [
+#     { "repuesto_id": 3, "codigo": "BU-003", "descripcion": "Bujía",
+#       "cantidad": 4, "precio_unitario": "1500.00", "subtotal": "6000.00" }
+#   ],
+#   "historial": [
+#     { "desde_estado": null, "hasta_estado": "PENDIENTE",
+#       "usuario_id": 3, "cuando": "..." },
+#     { "desde_estado": "PENDIENTE", "hasta_estado": "EN_REPARACION",
+#       "usuario_id": 4, "cuando": "..." }
+#   ]
+# }
+# Vehículo + cliente, ítems + repuesto e historial se resuelven con precargas
+# (sin carga perezosa) en un número fijo de consultas.
+
+### 7) A-01 / C-10 — alta con 2 ítems: precio copiado y total del servidor (US-023)
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Cambio de pastillas y aceite",
+  "items": [
+    { "repuesto_id": 2, "cantidad": 1 },
+    { "repuesto_id": 4, "cantidad": 3 }
+  ]
+}
+
+# Esperado: 201 (id 3)
+# {
+#   "id": 3, "vehiculo_id": 1, "patente": "AAA111", "estado": "PENDIENTE",
+#   "falla": "Cambio de pastillas y aceite", "creada_en": "...",
+#   "total": "19500.00", "mecanico_id": null, "cliente": "Laura",
+#   "items": [
+#     { "repuesto_id": 2, "codigo": "PF-002", "descripcion": "Pastillas de freno",
+#       "cantidad": 1, "precio_unitario": "12000.00", "subtotal": "12000.00" },
+#     { "repuesto_id": 4, "codigo": "AC-004", "descripcion": "Aceite por litro",
+#       "cantidad": 3, "precio_unitario": "2500.00", "subtotal": "7500.00" }
+#   ],
+#   "historial": [
+#     { "desde_estado": null, "hasta_estado": "PENDIENTE", "usuario_id": 3, "cuando": "..." }
+#   ]
+# }
+# 12000.00 + 3 × 2500.00 = 19500.00. La orden, sus ítems y la primera línea de
+# historial se confirman en el mismo UoW.
+
+### 8) El cuerpo no acepta total/estado/precio: 422 por `extra="forbid"`
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Intento de inyectar el total",
+  "total": "1.00",
+  "estado": "TERMINADA",
+  "items": [ { "repuesto_id": 1, "cantidad": 1, "precio_unitario": "1.00" } ]
+}
+
+# Esperado: 422
+# { "detail": "La petición no cumple el contrato.",
+#   "errores": [ { "campo": "total", ... }, { "campo": "estado", ... },
+#                { "campo": "items.0.precio_unitario", ... } ] }
+# El precio se copia del repuesto y el total se calcula en el servidor (RN-10).
+
+### 9) C-10 — repuesto inexistente: 409 y la orden NO queda creada
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Repuesto fantasma",
+  "items": [ { "repuesto_id": 999999, "cantidad": 1 } ]
+}
+
+# Esperado: 409
+# { "detail": "Uno de los repuestos indicados no existe o está dado de baja." }
+# Después, GET /ordenes sigue con `total: 3` (la orden 3 del bloque 7): la orden
+# inválida no dejó fila ni ítems a medias.
+
+### 10) C-10 — vehículo inexistente: 409 y la orden NO queda creada (RN-16)
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 999999,
+  "falla": "Vehículo fantasma",
+  "items": [ { "repuesto_id": 1, "cantidad": 1 } ]
+}
+
+# Esperado: 409
+# { "detail": "El vehículo indicado no existe o está dado de baja." }
+# El id llega en el cuerpo, no en la ruta: por eso es 409 y no 404. Mismo
+# criterio para un vehículo dado de baja (RN-16): deja de poder usarse en
+# órdenes nuevas aunque su fila se conserve.
+
+### 11) A-02 / C-11 — stock insuficiente: 409 y rollback total (RN-13)
+# 1. Login del mecánico asignado a la orden 2:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "secreto123"
+}
+
+# 2. La orden 2 pide 4 bujías y el stock es 2:
+POST {{baseUrl}}/ordenes/2/terminar
+
+# Esperado: 409
+# { "detail": "No hay stock suficiente para terminar la orden." }
+# El servicio valida TODOS los ítems antes de escribir el primero: no queda
+# ningún movimiento, ningún descuento y ninguna línea de historial.
+# Después, GET /ordenes/2 sigue con "estado": "EN_REPARACION" y las 2 líneas de
+# historial del seed. Como ADMIN, GET /repuestos/3/movimientos sigue mostrando
+# sólo el «Stock inicial» (total 1) y GET /repuestos/3 devuelve "stock": 2.
+
+### 12) SU-04 — la identidad (403) va antes que el estado (409)
+# Login del mecánico 5, que NO está asignado a la orden 2:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico2@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes/2/terminar
+
+# Esperado: 403
+# { "detail": "No tenés permiso para realizar esta operación." }
+# No es 409: la orden está EN_REPARACION y además no tiene stock, pero la
+# identidad se evalúa primero (SU-04).
+
+### 13) Cancelar: dueño 200, ajena 403, repetida 409 (A-04 / C-13)
+# Login de la clienta dueña de Laura (usuario 6):
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "secreto123"
+}
+
+### 13.1) C-06 — ve su propia orden…
+GET {{baseUrl}}/ordenes/1
+
+# Esperado: 200 con "patente": "AAA111" y "cliente": "Laura".
+
+### 13.2) …y no la ajena
+GET {{baseUrl}}/ordenes/2
+
+# Esperado: 403
+# { "detail": "No tenés permiso para realizar esta operación." }
+# La orden 2 es del vehículo de Jorge, sin cuenta de usuario.
+
+### 13.3) Cancela su orden PENDIENTE
+POST {{baseUrl}}/ordenes/1/cancelar
+
+# Esperado: 200
+# { "id": 1, ..., "estado": "CANCELADA", ... }
+# Después, GET /ordenes/1 muestra una tercera línea de historial:
+# { "desde_estado": "PENDIENTE", "hasta_estado": "CANCELADA", "usuario_id": 6, ... }
+
+### 13.4) Cancelar otra vez → 409 (no es PENDIENTE)
+POST {{baseUrl}}/ordenes/1/cancelar
+
+# Esperado: 409
+# { "detail": "La orden no admite esa transición de estado." }
+
+### 13.5) Cancelar la orden ajena → 403 (identidad antes que estado)
+POST {{baseUrl}}/ordenes/2/cancelar
+
+# Esperado: 403 (no 409). La orden 2 no es PENDIENTE, pero la clienta tampoco es
+# la dueña ni personal del taller: primero se evalúa la identidad (SU-04).
+
+### 13.6) Un mecánico ajeno tampoco cancela
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes/1/cancelar
+
+# Esperado: 403: cancelar es de ADMIN, RECEPCION o dueño (DD-06). El mecánico no
+# está en esa matriz y la ruta no lleva `requiere_rol`: lo decide el servicio.
+
+### 14) A-03 / C-12 — iniciar, terminar y aviso post-confirmación
+# Login de RECEPCION para crear una orden con stock suficiente:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Cambio de filtro",
+  "items": [ { "repuesto_id": 1, "cantidad": 2 } ]
+}
+
+# Esperado: 201 (id 4) con "total": "17000.00" (2 × 8500.00).
+
+# Login del mecánico y transiciones:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes/4/iniciar
+
+# Esperado: 200
+# { "id": 4, ..., "estado": "EN_REPARACION", "mecanico_id": 4, ... }
+# Deja la línea PENDIENTE → EN_REPARACION en el historial.
+
+POST {{baseUrl}}/ordenes/4/iniciar
+
+# Esperado: 409 (ya no está PENDIENTE).
+
+POST {{baseUrl}}/ordenes/4/terminar
+
+# Esperado: 200
+# { "id": 4, ..., "estado": "TERMINADA", "total": "17000.00", ... }
+# En el mismo UoW: stock del repuesto 1 de 10 → 8, un `movimiento_stock` con
+# cantidad -2, `orden_id: 4`, `usuario_id: 4` y motivo "Salida por orden 4", y la
+# línea EN_REPARACION → TERMINADA. Recién después del commit, `BackgroundTasks`
+# ejecuta el aviso simulado (`await asyncio.sleep(0.5)` + log):
+#   INFO app.ordenes — Aviso simulado al cliente: la orden 4 está terminada.
+
+### 15) Un ADMIN puede terminar una orden que no tiene asignada
+# Login de ADMIN:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "secreto123"
+}
+
+# La orden 3 (2 ítems) sigue PENDIENTE. El mecánico la inicia:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes/3/iniciar
+
+# Esperado: 200, "mecanico_id": 4.
+
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes/3/terminar
+
+# Esperado: 200, "estado": "TERMINADA". El ADMIN no necesita ser el asignado.
+# Un movimiento negativo por cada ítem (2): -1 pastilla y -3 aceite.
+
+### 16) Un movimiento por ítem y el stock descontado (RN-13 / RN-14)
+GET {{baseUrl}}/repuestos/3/movimientos?page=1&size=20
+
+# Esperado: 200, `total: 1` (sólo «Stock inicial»): la orden 2 nunca se terminó.
+
+GET {{baseUrl}}/repuestos/2/movimientos?page=1&size=20
+
+# Esperado: 200. La última fila es la salida de la orden 3:
+# { "cantidad": -1, "motivo": "Salida por orden 3", "orden_id": 3, "usuario_id": 1 }
+
+GET {{baseUrl}}/repuestos/4/movimientos?page=1&size=20
+
+# Esperado: 200. La última fila es la salida de la orden 3:
+# { "cantidad": -3, "motivo": "Salida por orden 3", "orden_id": 3, "usuario_id": 1 }
+
+GET {{baseUrl}}/repuestos/1
+
+# Esperado: 200 con "stock": 8 (10 del seed − 2 de la orden 4).
+
+### 17) C-13 — una orden TERMINADA no se cancela
+# Login de RECEPCION:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes/3/cancelar
+
+# Esperado: 409
+# { "detail": "La orden no admite esa transición de estado." }
+# La recepción sí tiene identidad para cancelar; el estado es el que la rechaza.
+
+### 18) /mis-ordenes: sólo los vehículos del cliente de la sesión (RN-17)
+# Con la cookie de la clienta:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "secreto123"
+}
+
+GET {{baseUrl}}/mis-ordenes?page=1&size=20
+
+# Esperado: 200 con las órdenes de AAA111 y AAB222. Al final de esta corrida:
+# las órdenes 1 (CANCELADA), 3 (TERMINADA) y 4 (TERMINADA) son de Laura;
+# la 2 es de Jorge y no aparece. El envoltorio es el uniforme:
+# { "items": [ ... ], "total": 3, "page": 1, "size": 20, "pages": 1 }
+
+### 18.1) Una cuenta sin ficha de cliente recibe una página vacía, no 404
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "secreto123"
+}
+
+GET {{baseUrl}}/mis-ordenes
+
+# Esperado: 200
+# { "items": [], "total": 0, "page": 1, "size": 20, "pages": 0 }
+
+### 19) Matriz de permisos: 403 donde la matriz no autoriza
+# 19.1) Alta con MECANICO → 403
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Sin permiso",
+  "items": [ { "repuesto_id": 1, "cantidad": 1 } ]
+}
+
+# Esperado: 403
+# { "detail": "No tenés permiso para realizar esta operación." }
+
+# 19.2) Iniciar con RECEPCION → 403
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "secreto123"
+}
+
+POST {{baseUrl}}/ordenes/2/iniciar
+
+# Esperado: 403 (iniciar es sólo de MECANICO).
+
+# 19.3) Terminar con RECEPCION → 403
+POST {{baseUrl}}/ordenes/2/terminar
+
+# Esperado: 403 (terminar es de ADMIN o MECANICO; el mecánico debe ser el asignado).
+
+### 20) Sin sesión → 401 en todo el módulo
+# Borrar la cookie `access_token` antes de estos bloques.
+GET {{baseUrl}}/ordenes
+
+# Esperado: 401
+# { "detail": "No hay una sesión válida." }
+
+GET {{baseUrl}}/estados-orden
+
+# Esperado: 401.
+
+GET {{baseUrl}}/mis-ordenes
+
+# Esperado: 401.
+
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Sin sesión",
+  "items": [ { "repuesto_id": 1, "cantidad": 1 } ]
+}
+
+# Esperado: 401 (el 401 se evalúa antes que el 422 del cuerpo).
+
+### 21) C-09 — catálogo vacío: 409 y no crea nada (RN-19)
+# BLOQUE DESTRUCTIVO: ejecutarlo al final, porque vacía el catálogo y con él las
+# órdenes, los ítems y el historial (TRUNCATE ... CASCADE). En psql:
+#   TRUNCATE estado_orden CASCADE;
+# Para volver al estado inicial: `python seed.py`.
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Sin catálogo",
+  "items": [ { "repuesto_id": 1, "cantidad": 1 } ]
+}
+
+# Esperado: 409
+# { "detail": "El catálogo de estados está vacío: no se puede crear una orden." }
+# `PENDIENTE` no existe, así que no se escribe ninguna fila. La creación se
+# detiene antes de tocar `orden_trabajo` (RN-19).

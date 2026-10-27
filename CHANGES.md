@@ -333,7 +333,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ---
 
 ### [C-11] `ordenes-trabajo`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Épica 8 (US-023, US-024, US-026) — módulo `ordenes` con la transacción multi-escritura del TP
   - `POST /ordenes` (RECEPCION, ADMIN): contrato `{vehiculo_id, falla, items:[{repuesto_id, cantidad}]}` con `extra="forbid"` — **no** acepta precio/total/estado/fecha; nace PENDIENTE; ≥ 1 ítem; sin repuestos repetidos; precio copiado del repuesto; total calculado con `Decimal` en el servidor; catálogo vacío → 409; vehículo baja o repuesto inexistente/baja → 409 **sin dejar la orden** (C-10); 201 con precio, total y primera línea de historial
   - `POST /ordenes/{id}/iniciar` (MECANICO): PENDIENTE→EN_REPARACION, asigna `mecanico_id` = usuario actual, línea de historial, 200

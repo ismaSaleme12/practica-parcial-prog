@@ -41,7 +41,7 @@ El sistema modela el circuito completo del taller:
 
 La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices únicos parciales para el borrado lógico y los roles vigentes, un catálogo de estados y un disparador de **sólo agregado** sobre tres tablas de auditoría.
 
-**Estado actual:** los changes `C-01` a `C-10` están implementados y archivados (proyecto, persistencia, modelos, migraciones, tests, contratos, autenticación, RBAC, clientes/vehículos y repuestos/stock). Queda el núcleo del dominio: órdenes de trabajo (`C-11`), la auditoría de lectura sin N+1 (`C-12`) y la consolidación de la evidencia de entrega (`C-13`).
+**Estado actual:** los changes `C-01` a `C-11` están implementados y archivados. La API está **completa en endpoints**: autenticación, RBAC, clientes/vehículos, repuestos/stock y órdenes de trabajo con su máquina de estados y la transacción de descuento de stock. Quedan la auditoría de lectura sin N+1 y el aviso en segundo plano (`C-12`) y la consolidación de la evidencia de entrega (`C-13`).
 
 ---
 
@@ -49,7 +49,7 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 
 <!-- ACTUALIZAR AL ARCHIVAR UN CHANGE: marcar la fila como completada, ajustar el contador de pruebas y mover el change de pending a openspec/changes/archive/. -->
 
-**Changes completados: 10 de 13.** **Suite: 124 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
+**Changes completados: 11 de 13.** **Suite: 189 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
 
 | ID | Change | Estado | Fase |
 |---|---|---|---|
@@ -63,11 +63,11 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 | C-08 | `authorization-rbac` | ✓ completado | 4 — Autorización |
 | C-09 | `clientes-vehiculos` | ✓ completado | 5 — Dominio del taller |
 | C-10 | `repuestos-stock` | ✓ completado | 5 — Dominio del taller |
-| C-11 | `ordenes-trabajo` | ☐ pendiente | 5 — Dominio del taller |
+| C-11 | `ordenes-trabajo` | ✓ completado | 5 — Dominio del taller |
 | C-12 | `detalle-sin-n1` | ☐ pendiente | 6 — Calidad de lectura |
 | C-13 | `casos-de-prueba` | ☐ pendiente | 6 — Entrega |
 
-Los diez changes completados están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/` (30 capacidades).
+Los once changes completados están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/` (33 capacidades).
 
 > **Cómo actualizar esta sección** (obligatorio al archivar un change): (1) marcar la fila con ✓, (2) actualizar el contador de changes y el de pruebas con el resultado real de `python -m pytest test/ -q`, (3) mover el directorio del change de `openspec/changes/` a `openspec/changes/archive/`, (4) marcar el `[x]` en `CHANGES.md`. No se actualiza «a ojo»: el contador sale de la corrida de la suite.
 
@@ -190,7 +190,12 @@ practica-parcial-prog/
 │       │   ├── service.py      # Alta con stock_inicial, PATCH con historial, baja, reposición
 │       │   └── router.py       # /repuestos completo (grupo protegido)
 │       └── ordenes/
-│           └── models.py       # estado_orden, orden_trabajo, item_orden, historial_estado_orden
+│           ├── models.py       # estado_orden, orden_trabajo, item_orden, historial_estado_orden
+│           ├── schemas.py      # OrdenCrear, OrdenDetalle, OrdenResumen, enum de estados
+│           ├── repository.py   # Precargas fijas + EstadoOrdenRepository de sólo lectura
+│           ├── unit_of_work.py # OrdenesUnitOfWork (reusa repos de clientes y repuestos)
+│           ├── service.py      # Alta, transiciones, rollback de stock y aviso simulado
+│           └── router.py       # /ordenes, /estados-orden y /mis-ordenes (grupo protegido)
 ├── migrations/
 │   ├── env.py                  # Plantilla asincrónica; URL desde Settings
 │   ├── script.py.mako
@@ -384,7 +389,7 @@ Definidos en `main.py`. El control de contraseña provisoria se monta **una sola
 | Grupo | Rutas | Exige |
 |---|---|---|
 | **Abierto** | `/health/*`, `/auth/*` | Nada. `/auth/yo` y `/auth/cambiar-password` exigen sesión **por dentro**, pero no el cambio obligatorio |
-| **Protegido** | `/usuarios`, `/eventos`, `/clientes`, `/vehiculos`, `/mis-vehiculos`, `/repuestos` (y los módulos futuros) | Sesión válida (401) y `debe_cambiar_password = false` (403) |
+| **Protegido** | `/usuarios`, `/eventos`, `/clientes`, `/vehiculos`, `/mis-vehiculos`, `/repuestos`, `/ordenes`, `/estados-orden`, `/mis-ordenes` | Sesión válida (401) y `debe_cambiar_password = false` (403) |
 
 El 403 de contraseña provisoria dice: «Tenés que cambiar la contraseña provisoria antes de usar esta ruta.» `/auth` queda abierto a propósito: si el grupo protegido incluyera el cambio de contraseña, el usuario afectado no podría cambiar la clave nunca.
 
@@ -461,15 +466,37 @@ Notas de contrato verificadas en el código:
 - Los listados usan el envoltorio uniforme `{items, total, page, size, pages}`; `page` empieza en 1, `size` va de 1 a 100 (default 20) y una página fuera de rango es 422 con mensaje propio.
 - Un `q` con comillas (`' OR '1'='1`) viaja como **parámetro ligado**: devuelve `total: 0`, no filas de más (caso C-16).
 
-### Pendientes (`C-11` a `C-13`)
+### Módulo `ordenes` (grupo protegido)
 
-Estas rutas **todavía no existen** en el código; hoy responderían 404. Se listan para no confundirlas con lo implementado:
+| Método | Ruta | Rol requerido | Descripción | Códigos |
+|---|---|---|---|---|
+| GET | `/ordenes` | ADMIN, RECEPCION, MECANICO | Listado paginado (`creada_en` desc, `id` desc); filtro `estado` validado por enum del contrato | `200`, `401`, `403`, `422` |
+| GET | `/ordenes/{orden_id}` | Cualquier sesión; **CLIENTE sólo las de sus vehículos** | Detalle con vehículo, cliente, ítems con su repuesto e historial, **precargado** (3 consultas fijas) | `200`, `401`, `403`, `404` |
+| POST | `/ordenes` | ADMIN, RECEPCION | Alta `PENDIENTE` con ≥ 1 ítem y sin repuestos repetidos; precio copiado y `total` calculado en el servidor; primera línea de historial en el mismo UoW | `201`, `401`, `403`, `409`, `422` |
+| POST | `/ordenes/{orden_id}/iniciar` | MECANICO | `PENDIENTE → EN_REPARACION`; asigna el mecánico de la sesión + historial | `200`, `401`, `403`, `404`, `409` |
+| POST | `/ordenes/{orden_id}/terminar` | ADMIN o mecánico **asignado** | `EN_REPARACION → TERMINADA`: descuenta stock, un movimiento negativo por ítem e historial; **403 antes que 409**; agenda el aviso simulado | `200`, `401`, `403`, `404`, `409` |
+| POST | `/ordenes/{orden_id}/cancelar` | ADMIN, RECEPCION o **dueño** (sin `requiere_rol`, DD-06) | `PENDIENTE → CANCELADA`; el servicio evalúa identidad **antes** que estado | `200`, `401`, `403`, `404`, `409` |
+| GET | `/estados-orden` | Cualquier sesión | Catálogo de sólo lectura, ordenado por `posicion`, con `es_final` visible (DD-07) | `200`, `401`, `403` |
+| GET | `/mis-ordenes` | Cualquier sesión | Órdenes de los vehículos del cliente de la sesión (RN-17); `[]` si la cuenta no tiene ficha de cliente | `200`, `401`, `403`, `422` |
 
-| Change | Rutas planificadas |
+Notas de contrato verificadas en el código:
+
+- El alta **sólo** acepta `vehiculo_id`, `falla` e `items[{repuesto_id, cantidad}]`. Enviar `precio_unitario`, `total`, `estado`, fecha o `mecanico_id` es **422** por `extra="forbid"` (RN-10). `items: []` y los repuestos repetidos son 422 con el campo `items` nombrado.
+- Un vehículo o un repuesto inexistente o dado de baja en el alta es **409** y la orden **no queda creada**: orden, ítems e historial comparten un único UoW (RN-13, RN-16).
+- `terminar` valida **todos** los ítems antes de escribir el primero: si falta stock es 409 con rollback total (stock intacto, cero movimientos, cero historial, la orden sigue `EN_REPARACION`). La carrera concurrente se apoya en el `CHECK stock >= 0` y el rollback (hoy no hay `SELECT … FOR UPDATE`).
+- El orden de validación de `terminar` y `cancelar` es **404 → 403 → 409**: la identidad se evalúa antes que la máquina de estados (RN-12, SU-04).
+- Un `estado` no declarado en `GET /ordenes` es **422**, no una lista vacía ni 409 (caso C-17).
+- `historial_estado_orden` y `movimiento_stock` son de **sólo agregado**; el catálogo `estado_orden` no se escribe desde la API (RN-15, RN-19).
+- El aviso al cliente se agenda con `BackgroundTasks` **después** de que el servicio retorna (es decir, después del commit): un 403/404/409 nunca lo agenda (DD-13 / US-026).
+
+### Pendientes (`C-12` y `C-13`)
+
+Ninguna de las dos agrega rutas nuevas:
+
+| Change | Alcance |
 |---|---|
-| C-11 | `POST /ordenes`, `GET /ordenes`, `GET /ordenes/{id}`, `POST /ordenes/{id}/iniciar`, `POST /ordenes/{id}/terminar`, `POST /ordenes/{id}/cancelar`, `GET /estados-orden`, `GET /mis-ordenes` |
-| C-12 | Lecturas con número fijo de consultas en `GET /ordenes/{id}`, `GET /clientes/{id}` y `/mis-*` (no agrega rutas nuevas) |
-| C-13 | Ninguna ruta: consolida la evidencia `.http`, `test/solo_agregado.sql` y la suite |
+| C-12 | Auditoría de lectura: conteo fijo de consultas en `GET /ordenes/{id}`, `GET /clientes/{id}` y `/mis-*` (caso C-15), aviso `BackgroundTasks` verificado post-confirmación (caso C-12) y `SQL_ECHO` habilitable |
+| C-13 | Consolidación de la evidencia `.http`, `test/solo_agregado.sql` (caso C-14), matriz C-01..C-19 y verificación integral |
 
 ---
 
@@ -641,7 +668,7 @@ $env:TEST_POSTGRES_DB="taller_mecanico_c10"; python -m pytest test/ -q
 
 Corre contra **PostgreSQL real**: sin SQLite, sin repositorios falsos, sin mocks de red y sin testcontainers. El único doble es el de `/health/ready` cuando se simula una caída de infraestructura.
 
-**Resultado actual: 124 pruebas en verde.**
+**Resultado actual: 189 pruebas en verde.**
 
 ### Qué cubre cada archivo
 
@@ -655,6 +682,7 @@ Corre contra **PostgreSQL real**: sin SQLite, sin repositorios falsos, sin mocks
 | `test/test_rbac.py` | 18 | 401 vs 403, matriz de repuestos, claim `roles` que no autoriza, revocación inmediata (C-07), `vence_en` sin zona/pasado → 422, autoprotección (C-08), 403 por contraseña provisoria, eventos de seguridad, `/eventos` paginado |
 | `test/test_clientes.py` | 14 | Alta de cliente y vehículo, documento y patente repetidos → 409, `GET /clientes/{id}` con vehículos precargados, baja con órdenes abiertas → 409, patente reutilizable tras la baja (C-19), aislamiento de `/mis-vehiculos` (RN-17), 401/403 |
 | `test/test_repuestos.py` | 46 | `stock_inicial` + movimiento «Stock inicial», `stock` por PATCH → 422 (C-16), historial de precio sólo si cambió (C-18), `reponer` con movimiento, baja lógica y reutilización del código, `q` con inyección → `total: 0`, paginación de movimientos y precios, 401/403 |
+| `test/test_ordenes.py` | 65 | Alta con precio copiado y `total` del servidor, repuestos repetidos y campos no declarados → 422 (RN-10), catálogo vacío → 409 (C-09), repuesto/vehículo inexistente o de baja no deja orden (C-10), stock insuficiente con rollback total (C-11), 403 antes que 409 (SU-04), iniciar/terminar/cancelar, aviso agendado sólo al confirmar (C-12), cancelar una TERMINADA → 409 (C-13), estado no declarado → 422 (C-17), detalle ajeno → 403 (C-06), `/mis-ordenes`, 401/403 |
 
 ### Evidencia `.http`
 
@@ -667,6 +695,7 @@ Los archivos `test/*.http` son la **evidencia pedida por la consigna**; la suite
 | `test/rbac.http` | 401/403, matriz de roles, revocación inmediata, `vence_en`, autoprotección, contraseña provisoria y eventos (C-08) |
 | `test/clientes.http` | Alta de cliente y vehículo, patente repetida tras la baja, baja con orden abierta y aislamiento de `/mis-vehiculos` (C-09) |
 | `test/repuestos.http` | Casos B-01 a B-04: stock no editable, precio historiado, PATCH sin cambio sin línea, RECEPCION → 403 en ADMIN; más reposición, historiales y baja lógica (C-10) |
+| `test/ordenes.http` | 29 bloques: catálogo, listado y filtro, detalle completo, alta con total del servidor, 422 del contrato, vehículo/repuesto inexistente, stock insuficiente con rollback (C-11), 403 antes que 409 (SU-04), cancelar con dueño/ajeno/repetida (C-06, C-13), iniciar+terminar y aviso post-confirmación (A-01 a A-04, C-12), `/mis-ordenes` |
 
 ### Mapeo de los casos C-01 a C-19
 
@@ -677,22 +706,22 @@ Los archivos `test/*.http` son la **evidencia pedida por la consigna**; la suite
 | C-03 | Cookie vs `Authorization: Bearer` → 401 | ✓ `test_auth.py` |
 | C-04 | El cambio de contraseña invalida el token anterior | ✓ `test_auth.py` |
 | C-05 | 5 fallos → 429 con `Retry-After` | ✓ `test_auth.py` |
-| C-06 | Orden ajena → 403 | ☐ pendiente (`C-11`) |
+| C-06 | Orden ajena → 403 | ✓ `test_ordenes.py` (detalle y cancelar) |
 | C-07 | Revocación de rol con efecto inmediato | ✓ `test_rbac.py` |
 | C-08 | Autoprotección del último ADMIN → 409 | ✓ `test_rbac.py` |
-| C-09 | Catálogo de estados vacío → 409 | ☐ pendiente (`C-11`) |
-| C-10 | Repuesto inexistente no deja la orden | ☐ pendiente (`C-11`) |
-| C-11 | Stock insuficiente → rollback total | ☐ pendiente (`C-11`) |
-| C-12 | Aviso post-respuesta sólo si se confirmó | ☐ pendiente (`C-11`/`C-12`) |
-| C-13 | Cancelar una orden TERMINADA → 409 | ☐ pendiente (`C-11`) |
+| C-09 | Catálogo de estados vacío → 409 | ✓ `test_ordenes.py` |
+| C-10 | Repuesto inexistente no deja la orden | ✓ `test_ordenes.py` (también vehículo inexistente o de baja) |
+| C-11 | Stock insuficiente → rollback total | ✓ `test_ordenes.py` |
+| C-12 | Aviso post-respuesta sólo si se confirmó | ◐ `test_ordenes.py` (agendado al confirmar, no agendado en 409); la verificación de temporalidad estricta queda en `C-12` |
+| C-13 | Cancelar una orden TERMINADA → 409 | ✓ `test_ordenes.py` |
 | C-14 | `UPDATE`/`DELETE` rechazados en las tablas de sólo agregado | ☐ pendiente: `test/solo_agregado.sql` **no existe todavía** (`C-13`); se ejercita con `psql` |
-| C-15 | Detalle con 2 y 4 ítems usa el mismo número de consultas | ☐ pendiente (`C-12`) |
+| C-15 | Detalle con 2 y 4 ítems usa el mismo número de consultas | ☐ pendiente (`C-12`): las precargas ya están, falta el conteo automatizado |
 | C-16 | `stock` por PATCH → 422 e inyección SQL en `q` | ✓ `test_repuestos.py` |
-| C-17 | Estado no declarado → 422 | ☐ pendiente (`C-11`) |
+| C-17 | Estado no declarado → 422 | ✓ `test_ordenes.py` |
 | C-18 | PATCH sin cambio de precio no deja línea | ✓ `test_repuestos.py` |
 | C-19 | Patente reutilizable después de la baja | ✓ `test_clientes.py` |
 
-Quedan **10 casos completamente cubiertos** (C-01 a C-05, C-07, C-08, C-16, C-18 y C-19) y **9 pendientes** de los changes de dominio. La matriz definitiva —`.http` + prueba automatizada por caso— es entregable de `C-13`.
+Quedan **17 casos cubiertos** (C-01 a C-11, C-13 y C-16 a C-19), **C-12 parcial** (el aviso ya se agenda sólo al confirmar; falta auditarlo con la respuesta en curso) y **2 pendientes** (C-14 y C-15), ambos entregables de `C-12` y `C-13`. La matriz definitiva —`.http` + prueba automatizada por caso— es entregable de `C-13`.
 
 ---
 
@@ -709,8 +738,8 @@ El proyecto usa **OPSX/OpenSpec** (spec-driven development). Cada unidad de trab
 ```
 
 - **Changes en curso:** `openspec/changes/<change>/` con `proposal.md`, `design.md`, `tasks.md` y `specs/`.
-- **Changes cerrados:** `openspec/changes/archive/<fecha>-<change>/` (C-01 a C-10 ya archivados).
-- **Capacidades vigentes:** `openspec/specs/<capacidad>/spec.md` (30 capacidades).
+- **Changes cerrados:** `openspec/changes/archive/<fecha>-<change>/` (C-01 a C-11 ya archivados).
+- **Capacidades vigentes:** `openspec/specs/<capacidad>/spec.md` (33 capacidades).
 - **Orden y dependencias:** `CHANGES.md` es el índice canónico (árbol, gates, camino crítico, plan con 3 agentes).
 
 **Commits:** Conventional Commits en español (`feat:`, `fix:`, `test:`, `chore:`), **sin trailers de co-autoría IA**. No se commitea ni se pushea sin pedido explícito del usuario.
@@ -747,16 +776,14 @@ Lo que falta o merece atención, sin dramatizar:
 
 **Alcance pendiente**
 
-- **No existen endpoints de órdenes de trabajo** (`C-11`). Las tablas, los modelos y el catálogo `estado_orden` están; el router y el servicio no. Hoy `/ordenes`, `/estados-orden` y `/mis-ordenes` responden 404. Es el change crítico: la transacción multi-escritura (orden + ítems + historial + movimientos de stock) y el descuento de stock al terminar.
-- **`C-09` y `C-10` dejaron el dominio completo salvo la orden**: clientes, vehículos, repuestos, stock y precios ya funcionan; el stock se descuenta sólo desde `C-11`.
-- **No hay verificación de N+1 ni de `BackgroundTasks`** (`C-12`): `/clientes/{id}` y `/mis-vehiculos` ya precargan con un número fijo de consultas, pero falta el conteo automatizado; tampoco hay todavía aviso post-respuesta que auditar.
-- **Falta la evidencia de entrega** (`C-13`): `test/solo_agregado.sql` (caso C-14) no existe, y quedan casos C-06, C-09 a C-15 y C-17 sin prueba automatizada.
+- **No hay auditoría de N+1 ni de `BackgroundTasks`** (`C-12`): `/ordenes/{id}`, `/clientes/{id}`, `/mis-vehiculos` y `/mis-ordenes` ya precargan con un número fijo de consultas, pero falta el conteo automatizado que pruebe que 2 y 4 ítems usan las mismas consultas (caso C-15). El aviso al cliente ya se agenda con `BackgroundTasks` sólo después del commit y hay tests de que un 409 no lo agenda; falta verificar que corra con la respuesta ya emitida (caso C-12).
+- **Falta la evidencia de entrega** (`C-13`): `test/solo_agregado.sql` (caso C-14) no existe; la matriz definitiva C-01..C-19 (`.http` + prueba automatizada) y la consolidación de los `.http` quedan para ese change.
 
 **Deuda técnica observada en el código**
 
-- **`session.execute()` genera `DeprecationWarning` de SQLModel** en `app/core/repository.py:84` (el `count`) y en `app/modules/usuarios/repository.py:133,155,184` (conteos y `scalar_one`/`one`), además de `app/modules/health/router.py:17`. Son usos legítimos de `Row`/escalar, pero con 124 pruebas la suite emite 294 warnings. Si se migran a `exec()`, hay que revisar que no cambien los tipos de retorno.
+- **`session.execute()` genera `DeprecationWarning` de SQLModel** en `app/core/repository.py:84` (el `count`) y en `app/modules/usuarios/repository.py:133,155,184` (conteos y `scalar_one`/`one`), además de `app/modules/health/router.py:17`. Son usos legítimos de `Row`/escalar, pero con 189 pruebas la suite emite 434 warnings. Si se migran a `exec()`, hay que revisar que no cambien los tipos de retorno.
 - **`/health/ready` devuelve `str(e)` en el `detail` del 503.** Eso puede exponer texto interno del motor (host, usuario, mensaje de conexión) y va contra el espíritu de RN-18, que prohíbe filtrar detalles de la infraestructura. Lo correcto sería un mensaje fijo y el detalle sólo en el log.
-- **Sin bloqueo de fila en el stock.** `POST /repuestos/{id}/reponer` y el futuro descuento de `C-11` leen y escriben `stock` sin `SELECT ... FOR UPDATE`: la concurrencia está fuera de alcance (capítulo 7), pero dos reposiciones simultáneas pueden perder una actualización.
+- **Sin bloqueo de fila en el stock.** `POST /repuestos/{id}/reponer` y el descuento de `terminar` leen y escriben `stock` sin `SELECT ... FOR UPDATE`: la concurrencia está fuera de alcance (capítulo 7), pero dos reposiciones o dos terminaciones simultáneas pueden perder una actualización. La transacción de `terminar` se apoya en el `CHECK stock >= 0` y en el rollback total (design D8 de C-11).
 - **La documentación describe el objetivo completo, no sólo lo implementado.** `knowledge-base/02_descripcion_general.md` lista todos los endpoints (incluidos los de `C-09` a `C-13`) y `knowledge-base/08_arquitectura_propuesta.md` muestra la estructura de módulos completa. La estructura real de hoy está en [Estructura de directorios](#estructura-de-directorios) y la lista real de rutas en [Endpoints](#endpoints).
 - **`app/modules/ordenes/models.py` documenta el módulo como `ordenes`, pero la KB lo llama `ordeneses`** en una tabla (`04_modelo_de_datos.md`, §Dominios). Es una errata de la KB; manda el nombre del código.
 - **`practica-parcial-prog-main/`** es un directorio **vacío** residual en la raíz; no forma parte del proyecto.
