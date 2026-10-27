@@ -95,6 +95,7 @@ Son contrato; romperlas es un defecto. Formato `NUNCA X → hacer Y`:
 - NUNCA crear el motor o la fábrica de sesiones al importar un módulo → van en el **lifespan**, en `app.state`; `get_session` entrega sesión con `expire_on_commit=False`.
 - NUNCA lazy loading en lecturas → carga anticipada (`selectinload`/`joinload`) con número **fijo** de consultas (verificar con `SQL_ECHO`, caso C-15).
 - NUNCA pasar un `select` de SQLAlchemy a `session.exec` → importar `select` de **SQLModel** (`from sqlmodel import select`); el de SQLAlchemy devuelve `Row` y la entidad pierde sus atributos sin error de tipos (detectado en C-02 al verificar contra PostgreSQL).
+- NUNCA consultar modelos importando un solo módulo → importar **`app/models.py`** (registro central) antes de consultar; las relaciones cruzan módulos y sin el registro SQLAlchemy no las resuelve («expression 'Cliente' failed to locate a name»). Las relaciones usan `lazy="raise_on_sql"`: un acceso perezoso lanza, hay que traer lo que se usa con `selectinload`/`joinedload`.
 - NUNCA `float`/entrega de unicidad por consulta previa → la unicidad entre vigentes se garantiza con los **índices únicos parciales** (`WHERE borrado_en IS NULL`, roles vigentes).
 
 **Autenticación y autorización**

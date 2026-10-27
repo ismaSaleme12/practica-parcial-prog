@@ -155,7 +155,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ## FASE 1 — Modelo y esquema (Ejercicio 2)
 
 ### [C-03] `domain-models`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 2 (US-005) — los 13 modelos SQLModel con todas las restricciones, **nombres de tablas y columnas obligatorios**
   - Módulo `usuarios`: `usuario`, `asignacion_rol` (CHECK rol en `ADMIN, RECEPCION, MECANICO, CLIENTE`; **índice único parcial** `(usuario_id, rol) WHERE revocada_en IS NULL`), `intento_acceso` (índice `(email, ip, cuando)`), `evento_seguridad`
   - Módulo `clientes`: `cliente` (`usuario_id` UNIQUE nulo, `documento` UNIQUE), `vehiculo` (**índice único parcial** `(patente) WHERE borrado_en IS NULL`; CHECK `anio BETWEEN 1950 AND 2100`)

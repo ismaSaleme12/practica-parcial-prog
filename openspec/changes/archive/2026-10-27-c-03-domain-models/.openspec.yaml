@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-27
+goal: Modelar en SQLModel las 13 tablas del dominio con nombres obligatorios,
+  restricciones, indices y navegacion bidireccional
