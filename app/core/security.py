@@ -67,6 +67,7 @@ def crear_token(
     sub: str,
     roles: Sequence[str] | None = None,
     expires_delta: timedelta | None = None,
+    iat_minimo: datetime | None = None,
 ) -> str:
     """Emite un JWT firmado con ``sub``, ``iat``, ``exp`` y, si se pasan, los roles.
 
@@ -74,8 +75,18 @@ def crear_token(
     admite fracciones de segundo y truncarlas haría indistinguibles dos sesiones
     del mismo segundo (RN-07). Los roles son **informativos**: la autorización
     real se consulta en la base en cada petición.
+
+    ``iat_minimo`` garantiza por construcción que el token quede **después** de
+    ese instante (el ``password_cambiada_en`` del usuario). No alcanza con tomar
+    la hora: el reloj del sistema (en Windows, ~15,6 ms de granularidad) puede
+    devolver el **mismo** instante dos veces seguidas, y entonces un token
+    emitido justo después de un cambio de contraseña quedaría con el mismo
+    ``iat`` que el cambio y RN-07 no podría distinguirlo de una sesión anterior.
+    Si ``ahora`` no llega a superarlo, se corre un microsegundo.
     """
     ahora = datetime.now(timezone.utc)
+    if iat_minimo is not None and ahora <= iat_minimo:
+        ahora = iat_minimo + timedelta(microseconds=1)
     duracion = expires_delta or timedelta(minutes=settings.TOKEN_EXPIRE_MINUTES)
 
     payload: dict[str, Any] = {

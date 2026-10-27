@@ -265,7 +265,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ## FASE 4 — Autorización (Ejercicio 5)
 
 ### [C-08] `authorization-rbac`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 5 (US-013 a US-016) — RBAC decidido en la base y administración de personal
   - `app/core/dependencies.py`: `get_usuario_actual` (lee cookie; 401 si sin cookie/token inválido/vencido/usuario inactivo/`iat` anterior a `password_cambiada_en` **sin truncar**); `requiere_rol(...)` consulta `asignacion_rol` **en cada petición** (roles vigentes: no revocada y sin vencer — RN-04); control de `debe_cambiar_password` (403)
   - `main.py`: **dos grupos de rutas** con el control del cambio obligatorio montado **una sola vez** en el protegido (DD-05); re-montar `auth` y `health` en el grupo abierto

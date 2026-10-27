@@ -1,15 +1,17 @@
-"""Router del módulo de repuestos (prototipo de contratos de `C-06`).
+"""Router del módulo de repuestos (contratos de ``C-06`` + RBAC de ``C-08``).
 
-Endpoints:
+Endpoints (grupo **protegido** de ``main.py``):
 
 - ``GET /repuestos``: listado paginado con el envoltorio uniforme y búsqueda
-  ``q`` parametrizada.
-- ``GET /repuestos/{id}``: 200/404.
-- ``POST /repuestos``: 201 con stock 0.
+  ``q`` parametrizada — ADMIN, RECEPCION y MECANICO.
+- ``GET /repuestos/{id}``: 200/404 — ADMIN, RECEPCION y MECANICO.
+- ``POST /repuestos``: 201 con stock 0 — sólo ADMIN.
 
-**Provisional**: todavía no hay autenticación. `C-08` mueve este router al grupo
-protegido y agrega ``requiere_rol`` (ADMIN/RECEPCION/MECANICO para leer, ADMIN
-para escribir); `C-10` completa el ABM.
+Los permisos salen de la matriz de ``03_actores_y_roles.md``, no de una
+invención local. ``requiere_rol`` consulta los roles vigentes en la base en
+cada petición (RN-04); el grupo protegido aporta el 401 y el 403 del cambio
+obligatorio (DD-05). ``C-10`` completa el ABM (PATCH, baja, reposición e
+historiales).
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.dependencies import SessionDep
+from app.core.dependencies import AdminDep, PersonalDep, SessionDep, UsuarioActual
 from app.core.paginacion import Page, PageParamsDep
 from app.modules.repuestos import service
 from app.modules.repuestos.schemas import RepuestoCrear, RepuestoLeer
@@ -52,6 +54,7 @@ BusquedaDep = Annotated[
 async def listar_repuestos(
     uow: UoWDep,
     params: PageParamsDep,
+    actual: UsuarioActual = PersonalDep,
     q: BusquedaDep = None,
 ) -> Page[RepuestoLeer]:
     pagina = await service.listar(uow, params, q)
@@ -71,7 +74,11 @@ async def listar_repuestos(
     status_code=status.HTTP_200_OK,
     summary="Detalle de un repuesto vigente",
 )
-async def obtener_repuesto(uow: UoWDep, repuesto_id: int) -> RepuestoLeer:
+async def obtener_repuesto(
+    uow: UoWDep,
+    repuesto_id: int,
+    actual: UsuarioActual = PersonalDep,
+) -> RepuestoLeer:
     repuesto = await service.obtener(uow, repuesto_id)
     return RepuestoLeer.model_validate(repuesto)
 
@@ -82,6 +89,10 @@ async def obtener_repuesto(uow: UoWDep, repuesto_id: int) -> RepuestoLeer:
     status_code=status.HTTP_201_CREATED,
     summary="Alta de repuesto (stock inicial 0)",
 )
-async def crear_repuesto(uow: UoWDep, datos: RepuestoCrear) -> RepuestoLeer:
+async def crear_repuesto(
+    uow: UoWDep,
+    datos: RepuestoCrear,
+    actual: UsuarioActual = AdminDep,
+) -> RepuestoLeer:
     repuesto = await service.crear(uow, datos)
     return RepuestoLeer.model_validate(repuesto)

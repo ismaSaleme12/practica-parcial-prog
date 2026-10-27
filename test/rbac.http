@@ -1,0 +1,289 @@
+# Evidencia del change C-08 — autorización RBAC y administración de personal
+# (Épica 5, US-013 a US-016).
+#
+# Requiere la app levantada (uvicorn main:app --reload) y la base migrada + seed.py.
+# Todos los usuarios del seed tienen la contraseña `secreto123`.
+#
+# Regla que ordena toda esta evidencia: el permiso se decide **en la base en cada
+# petición** (RN-04). El JWT lleva `roles`, pero son informativos: revocar un rol
+# le quita el permiso a una sesión ya abierta sin esperar a que el token venza.
+#
+# Grupos de rutas (DD-05 / US-015 CA-1):
+#   - ABIERTO:    /health, /auth
+#   - PROTEGIDO:  /usuarios, /eventos, /repuestos  ← exige sesión (401) y que el
+#                 cambio obligatorio de contraseña no esté pendiente (403).
+#
+# En cada bloque se comenta el código y el cuerpo esperado.
+
+@baseUrl = http://localhost:8000
+@password = secreto123
+
+### 1) Sin cookie en el grupo protegido → 401 (US-013)
+GET {{baseUrl}}/repuestos
+
+# Esperado: 401
+# { "detail": "No hay una sesión válida." }
+# Sin sesión no se evalúa el rol: primero identidad (401), después permiso (403).
+# Lo mismo para GET /eventos, GET /usuarios/1/roles, POST /usuarios y POST /repuestos.
+
+### 2) Sesión de CLIENTE en el grupo protegido → 403 (autenticado sin permiso)
+# Primero:
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "secreto123"
+}
+
+# Después, conservando la cookie:
+GET {{baseUrl}}/repuestos
+
+# Esperado: 403
+# { "detail": "No tenés permiso para realizar esta operación." }
+# El cliente existe y está activo: no es 401. Simplemente no tiene rol de personal.
+
+### 3) Matriz de repuestos (03_actores_y_roles.md)
+# Con la sesión de recepcion@example.com: GET /repuestos → 200, POST /repuestos → 403.
+# Con la sesión de mecanico@example.com:  GET /repuestos → 200, POST /repuestos → 403.
+# Con la sesión de admin@example.com:     GET /repuestos → 200, POST /repuestos → 201.
+POST {{baseUrl}}/repuestos
+Content-Type: application/json
+
+{
+  "codigo": "ZZ-903",
+  "descripcion": "Prueba RBAC",
+  "precio": "100.00"
+}
+
+# Esperado con ADMIN: 201, con stock 0.
+# Esperado con RECEPCION o MECANICO: 403 con el mensaje uniforme.
+
+### 4) El claim `roles` del token NO autoriza (RN-04)
+# Con la sesión de recepcion@example.com, copiar el JWT de la cookie y armar a
+# mano un token con `roles: ["ADMIN"]` (por ejemplo con crear_token de
+# app/core/security.py) para el `sub` de la recepción. Pedir:
+GET {{baseUrl}}/eventos
+Cookie: access_token=<JWT con claim roles ADMIN y sub de la recepción>
+
+# Esperado: 403
+# `requiere_rol` consulta `asignacion_rol` en la base en cada petición; el claim
+# es informativo (lo muestra /auth/yo) y nunca se usa para autorizar.
+
+### 5) Revocación con efecto INMEDIATO sobre una sesión abierta (caso C-07)
+# 1. Login de recepcion@example.com y conservar su cookie (token A).
+# 2. Login de admin@example.com (otra cookie) y revocar:
+DELETE {{baseUrl}}/usuarios/3/roles/RECEPCION
+
+# Esperado: 200
+# { "mensaje": "Rol RECEPCION revocado." }
+
+# 3. Con el token A (emitido antes de la revocación), pedir:
+GET {{baseUrl}}/repuestos
+Cookie: access_token=<token A>
+
+# Esperado: 403
+# La fila de `asignacion_rol` queda con `revocada_en` (no se borra) y la
+# siguiente petición ya no ve el rol. No hay que esperar al vencimiento del JWT.
+
+# 4. Reasignar el rol con la sesión del ADMIN:
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+
+{
+  "rol": "RECEPCION"
+}
+
+# Esperado: 201
+# 5. El MISMO token A vuelve a pasar: GET /repuestos → 200. La autorización se
+#    consulta en la base, nunca se cachea en el token.
+
+### 6) Historial de roles de un usuario (ADMIN) y 404
+# Con sesión de admin@example.com:
+GET {{baseUrl}}/usuarios/4/roles
+
+# Esperado: 200
+# [ { "rol": "MECANICO", "desde": "2026-10-27T...", "vence_en": null,
+#     "revocada_en": null, "vigente": true } ]
+# Incluye las filas revocadas y vencidas: el historial no se borra nunca.
+
+GET {{baseUrl}}/usuarios/999999/roles
+
+# Esperado: 404 (el usuario no existe).
+
+### 7) Asignación abierta repetida → 409 por el índice único parcial (RN-03)
+# El mecánico 4 ya tiene MECANICO abierto desde el seed. No hay consulta previa
+# de unicidad: el insert choca contra el índice parcial y el handler lo traduce.
+POST {{baseUrl}}/usuarios/4/roles
+Content-Type: application/json
+
+{
+  "rol": "MECANICO"
+}
+
+# Esperado: 409
+# { "detail": "La operación entra en conflicto con datos ya guardados." }
+# Sin texto del motor ni nombre del índice (RN-18).
+
+### 8) Asignación con vence_en con zona horaria y futuro → 201
+POST {{baseUrl}}/usuarios/4/roles
+Content-Type: application/json
+
+{
+  "rol": "ADMIN",
+  "vence_en": "2026-12-31T23:59:59+00:00"
+}
+
+# Esperado: 201
+# { "rol": "ADMIN", "desde": "...", "vence_en": "2026-12-31T23:59:59Z",
+#   "revocada_en": null, "vigente": true }
+# El mecánico ya puede GET /eventos con su token anterior: los permisos se
+# consultan en la base en cada petición.
+
+### 9) vence_en sin zona horaria → 422
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+
+{
+  "rol": "MECANICO",
+  "vence_en": "2026-12-31T23:59:59"
+}
+
+# Esperado: 422
+# La fecha sin zona es ambigua (¿la hora de quién?): es un error de contrato,
+# no un conflicto. El mensaje pide incluir zona horaria.
+
+### 10) vence_en en el pasado → 422
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+
+{
+  "rol": "MECANICO",
+  "vence_en": "2020-01-01T00:00:00+00:00"
+}
+
+# Esperado: 422
+# Una vigencia que ya pasó no aporta nada: el mensaje dice que debe ser futura.
+
+### 11) Reasignar un rol VENCIDO cierra la fila vieja y abre una nueva
+# Simular el vencimiento del MECANICO abierto del usuario 5 sin revocarlo:
+#   UPDATE asignacion_rol SET vence_en = now() - interval '1 day'
+#    WHERE usuario_id = 5 AND rol = 'MECANICO' AND revocada_en IS NULL;
+# Después:
+POST {{baseUrl}}/usuarios/5/roles
+Content-Type: application/json
+
+{
+  "rol": "MECANICO"
+}
+
+# Esperado: 201 y dos filas para (5, MECANICO): la primera con `revocada_en`
+# escrito (se cerró) y la segunda abierta. El índice parcial sólo mira
+# `revocada_en`, así que la fila vencida hay que cerrarla antes de reabrir.
+
+### 12) Autoprotección: un ADMIN no se revoca su propio ADMIN → 409 (caso C-08)
+# Con sesión de admin@example.com:
+DELETE {{baseUrl}}/usuarios/1/roles/ADMIN
+
+# Esperado: 409
+# { "detail": "Un administrador no puede revocarse su propio rol ADMIN." }
+# La fila sigue abierta: la comprobación corre antes de escribir.
+
+### 13) El sistema no queda sin administradores vigentes → 409 (RN-05)
+# Con dos ADMIN vigentes (usuarios 1 y 2) sí se puede revocar el de otro:
+DELETE {{baseUrl}}/usuarios/2/roles/ADMIN
+
+# Esperado: 200. El admin2 conserva una sesión válida pero GET /eventos → 403.
+# Después, con el único ADMIN vigente:
+DELETE {{baseUrl}}/usuarios/1/roles/ADMIN
+
+# Esperado: 409 por la autoprotección: 0 ADMINs vigentes es inalcanzable.
+
+### 14) Rol inexistente en la URL de revocación → 404
+DELETE {{baseUrl}}/usuarios/3/roles/CLIENTE
+
+# Esperado: 404
+# { "detail": "El usuario no tiene una asignación abierta con ese rol." }
+
+### 15) Cambio obligatorio de contraseña: 403 en el grupo protegido, /auth abierto
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "nuevo@example.com",
+  "password": "secreto123"
+}
+
+# Esperado: 200 con "debe_cambiar_password": true. Conservando la cookie:
+GET {{baseUrl}}/auth/yo
+
+# Esperado: 200. /auth sigue abierto para poder cambiar la clave.
+
+GET {{baseUrl}}/repuestos
+
+# Esperado: 403
+# { "detail": "Tenés que cambiar la contraseña provisoria antes de usar esta ruta." }
+# El mismo 403 para /eventos, /usuarios/1/roles y POST /usuarios: el control se
+# monta UNA sola vez como dependencia del grupo protegido (DD-05 / US-015 CA-1).
+
+POST {{baseUrl}}/auth/cambiar-password
+Content-Type: application/json
+
+{
+  "password_actual": "secreto123",
+  "password_nueva": "NuevaClaveSegura2026"
+}
+
+# Esperado: 200 con un token NUEVO en la cookie. Con esa cookie, GET /repuestos
+# ya responde 200: el 403 del cambio obligatorio desapareció.
+
+### 16) Alta de personal con contraseña provisoria (ADMIN) + evento de seguridad
+# Con sesión de admin@example.com:
+POST {{baseUrl}}/usuarios
+Content-Type: application/json
+
+{
+  "email": "staff@example.com",
+  "nombre": "Staff Nuevo",
+  "password": "secreto123"
+}
+
+# Esperado: 201
+# { "id": 8, "email": "staff@example.com", "nombre": "Staff Nuevo",
+#   "activo": true, "debe_cambiar_password": true }
+# Sin `password_hash` ni `$2b$` en el cuerpo. En `evento_seguridad` queda
+# ("admin@example.com", "Alta de usuario id 8").
+
+# Con la cookie de staff@example.com, GET /repuestos → 403 hasta que cambie la
+# clave: la contraseña provisoria es una clave que debe cambiarse (RN-06).
+
+### 17) Asignar y revocar un rol dejan su evento
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+
+{
+  "rol": "MECANICO"
+}
+
+DELETE {{baseUrl}}/usuarios/3/roles/MECANICO
+
+# Esperado: 201 y 200. En `evento_seguridad` quedan, en ese orden:
+#   ("admin@example.com", "Asignación de rol MECANICO al usuario id 3")
+#   ("admin@example.com", "Revocación de rol MECANICO al usuario id 3")
+# El actor es el correo (texto de 120) y el cambio comparte el UoW del evento.
+
+### 18) GET /eventos: paginado y sólo ADMIN (US-016)
+# Con sesión de admin@example.com:
+GET {{baseUrl}}/eventos?page=1&size=1
+
+# Esperado: 200
+# {
+#   "items": [ { "id": 1, "cuando": "...", "actor": "SISTEMA",
+#                "accion": "Carga inicial de datos" } ],
+#   "total": N, "page": 1, "size": 1, "pages": N
+# }
+# El seed deja el evento de la carga inicial con actor 'SISTEMA'.
+
+# Con sesión de mecanico@example.com: GET /eventos → 403.
+# Con page fuera de rango y rol insuficiente: 403 (el rol se decide antes que la
+# página). Con ADMIN y page=99 sobre pocas filas: 422 de paginación.

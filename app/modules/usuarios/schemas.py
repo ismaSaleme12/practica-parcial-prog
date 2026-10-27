@@ -20,11 +20,15 @@ formato se valida con un patrón en el contrato.
 
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import StringConstraints, field_validator
 
 from app.core.schemas import ContratoEntrada, ContratoSalida
+
+if TYPE_CHECKING:  # sólo para los tipos; evita un ciclo en tiempo de import
+    from app.modules.usuarios.models import AsignacionRol
 
 # Las longitudes calcadas de los VARCHAR del esquema (usuario.email 320,
 # usuario.nombre 120): un texto más largo es 422 del contrato, no un DataError.
@@ -176,3 +180,87 @@ class YoRespuesta(ContratoSalida):
     usuario: UsuarioLeer
     roles_vigentes: list[str]
     roles_token: list[str]
+
+
+# Los cuatro roles del CHECK de ``asignacion_rol``. Se declaran acá (contrato)
+# para que un rol desconocido en el cuerpo sea 422, no un error de integridad.
+RolNombre = Literal["ADMIN", "RECEPCION", "MECANICO", "CLIENTE"]
+
+
+class RolAsignar(ContratoEntrada):
+    """Asignación de un rol con vigencia opcional (US-014).
+
+    ``vence_en`` es opcional, pero si viene debe traer **zona horaria** y estar
+    en el **futuro**: una fecha sin zona es ambigua (¿la hora de quién?) y una
+    que ya pasó no choca con nada guardado (Ejercicio 5). Las dos son 422, no
+    409, porque son errores de contrato. ``desde`` también exige zona horaria
+    si se envía (todas las fechas del esquema son ``timestamptz``).
+    """
+
+    rol: RolNombre
+    desde: datetime | None = None
+    vence_en: datetime | None = None
+
+    @field_validator("desde", "vence_en")
+    @classmethod
+    def _con_zona_horaria(cls, valor: datetime | None) -> datetime | None:
+        if valor is not None and (
+            valor.tzinfo is None or valor.utcoffset() is None
+        ):
+            raise ValueError(
+                "La fecha debe incluir zona horaria "
+                "(por ejemplo 2026-12-31T23:59:59+00:00)."
+            )
+        return valor
+
+    @field_validator("vence_en")
+    @classmethod
+    def _en_el_futuro(cls, valor: datetime | None) -> datetime | None:
+        if valor is not None and valor <= datetime.now(timezone.utc):
+            raise ValueError("La fecha de vencimiento debe ser futura.")
+        return valor
+
+
+class RolLeer(ContratoSalida):
+    """Una asignación de rol con su vigencia e historial.
+
+    ``vigente`` aplica la misma definición que ``requiere_rol``: no revocada y
+    sin vencer. Las filas revocadas o vencidas se devuelven igual porque el
+    historial de quién tuvo qué rol y hasta cuándo no se borra nunca.
+    """
+
+    rol: str
+    desde: datetime
+    vence_en: datetime | None = None
+    revocada_en: datetime | None = None
+    vigente: bool
+
+    @classmethod
+    def de_asignacion(
+        cls,
+        asignacion: "AsignacionRol",
+        ahora: datetime | None = None,
+    ) -> "RolLeer":
+        momento = ahora or datetime.now(timezone.utc)
+        vence = asignacion.vence_en
+        if vence is not None and vence.tzinfo is None:  # defensa: es timestamptz
+            vence = vence.replace(tzinfo=timezone.utc)
+        vigente = asignacion.revocada_en is None and (
+            vence is None or vence > momento
+        )
+        return cls(
+            rol=asignacion.rol,
+            desde=asignacion.desde,
+            vence_en=asignacion.vence_en,
+            revocada_en=asignacion.revocada_en,
+            vigente=vigente,
+        )
+
+
+class EventoLeer(ContratoSalida):
+    """Un evento de ``evento_seguridad`` (US-016)."""
+
+    id: int
+    cuando: datetime
+    actor: str
+    accion: str

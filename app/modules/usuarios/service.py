@@ -1,7 +1,8 @@
-"""Servicios del módulo de usuarios (Épica 4, ``C-07``).
+"""Servicios del módulo de usuarios (Épica 4 y 5).
 
-Alcance de este change: auto-registro, login con límite de intentos y hash
-ficticio, logout (en el router), ``/auth/yo`` y cambio de contraseña.
+Alcance: auto-registro, login con límite de intentos y hash ficticio, logout
+(en el router), ``/auth/yo``, cambio de contraseña (``C-07``) y administración
+de personal, roles con vigencia y eventos de seguridad (``C-08``).
 
 Reglas duras que este módulo implementa:
 
@@ -30,6 +31,8 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.errors import Conflicto, RecursoNoEncontrado
+from app.core.paginacion import Page, PageParams
 from app.core.security import crear_token, hash_password, verify_password
 from app.core.unit_of_work import UnitOfWork
 from app.modules.clientes.models import Cliente
@@ -44,12 +47,14 @@ from app.modules.usuarios.schemas import (
     CambioPassword,
     LoginCrear,
     RegistroCrear,
+    RolAsignar,
     UsuarioCrear,
 )
 from app.modules.usuarios.unit_of_work import UsuariosUnitOfWork
 
 # Literal a propósito: el nombre del status cambió entre versiones de Starlette.
 HTTP_401 = 401
+HTTP_404 = 404
 HTTP_429 = 429
 
 VENTANA_INTENTOS = timedelta(seconds=60)
@@ -57,15 +62,45 @@ MAXIMO_FALLOS = 5
 
 MENSAJE_CREDENCIALES = "Credenciales inválidas."
 MENSAJE_PASSWORD_ACTUAL = "La contraseña actual no es correcta."
+MENSAJE_AUTOPROTECCION = (
+    "Un administrador no puede revocarse su propio rol ADMIN."
+)
+MENSAJE_ULTIMO_ADMIN = (
+    "El sistema no puede quedar sin administradores vigentes."
+)
+MENSAJE_ROL_NO_ASIGNADO = (
+    "El usuario no tiene una asignación abierta con ese rol."
+)
 
 
-async def crear(uow: UsuariosUnitOfWork, datos: UsuarioCrear) -> Usuario:
-    """Crea el usuario con contraseña provisoria (``POST /usuarios``).
+def actor_de(usuario: Usuario) -> str:
+    """Texto del actor para ``evento_seguridad``/``otorgada_por``.
+
+    El correo identifica al usuario de forma legible; se recorta a 120 porque
+    así lo declara la columna y el contrato admite correos de hasta 320 (un
+    correo larguísimo no debe terminar en un 422 de datos al auditar).
+    ``'SISTEMA'`` es otro actor posible y no es un usuario (sección 5.8).
+    """
+    return usuario.email[:120]
+
+
+async def crear(
+    uow: UsuariosUnitOfWork,
+    datos: UsuarioCrear,
+    *,
+    actor: str,
+) -> Usuario:
+    """Crea el usuario con contraseña provisoria (``POST /usuarios``, ADMIN).
 
     El hash se calcula **antes** de abrir la transacción (regla dura): dentro,
     la conexión quedaría tomada los ~300 ms de bcrypt sin usar la base.
+
+    ``debe_cambiar_password=True`` es la clave provisoria que le da el admin:
+    hasta que la cambie, el grupo protegido le responde 403 (RN-06). El alta y
+    su evento de seguridad comparten el mismo UoW (US-016).
     """
     password_hash = await hash_password(datos.password)
+    ahora = datetime.now(timezone.utc)
 
     usuario = Usuario(
         email=datos.email,
@@ -75,7 +110,16 @@ async def crear(uow: UsuariosUnitOfWork, datos: UsuarioCrear) -> Usuario:
     )
 
     async with uow:
-        return await uow.usuarios.add(usuario)
+        await uow.usuarios.add(usuario)  # flush: ya tenemos usuario.id
+        await uow.eventos.add(
+            EventoSeguridad(
+                cuando=ahora,
+                actor=actor,
+                accion=f"Alta de usuario id {usuario.id}",
+            )
+        )
+
+    return usuario
 
 
 async def registrar(uow: UsuariosUnitOfWork, datos: RegistroCrear) -> Usuario:
@@ -186,7 +230,13 @@ async def autenticar(
         raise HTTPException(status_code=HTTP_401, detail=MENSAJE_CREDENCIALES)
 
     # 5. Token con ``iat`` sin truncar y los roles VIGENTES al emitirlo.
-    token = crear_token(sub=str(usuario.id), roles=roles)
+    #    ``iat_minimo`` asegura que quede después del último cambio de
+    #    contraseña aunque el reloj devuelva el mismo instante (RN-07).
+    token = crear_token(
+        sub=str(usuario.id),
+        roles=roles,
+        iat_minimo=usuario.password_cambiada_en,
+    )
     return usuario, roles, token
 
 
@@ -254,6 +304,137 @@ async def roles_vigentes(uow: UsuariosUnitOfWork, usuario_id: int) -> list[str]:
         return await uow.roles.roles_vigentes(usuario_id)
 
 
+async def listar_roles(
+    uow: UsuariosUnitOfWork, usuario_id: int
+) -> list[AsignacionRol]:
+    """Historial completo de roles del usuario (``GET /usuarios/{id}/roles``).
+
+    Incluye filas revocadas y vencidas: revocar no borra (US-014 CA-1). 404 si
+    el usuario no existe.
+    """
+    async with uow:
+        usuario = await uow.usuarios.get_by_id(usuario_id)
+        if usuario is None:
+            raise RecursoNoEncontrado("el usuario", usuario_id)
+        return await uow.roles.listar_por_usuario(usuario_id)
+
+
+async def asignar_rol(
+    uow: UsuariosUnitOfWork,
+    usuario_id: int,
+    datos: RolAsignar,
+    *,
+    actor: str,
+) -> AsignacionRol:
+    """Asigna un rol con vigencia opcional (``POST /usuarios/{id}/roles``).
+
+    Reglas (RN-03 / US-014):
+
+    - Una asignación **abierta repetida** responde 409 porque la base tiene el
+      índice único parcial ``(usuario_id, rol) WHERE revocada_en IS NULL``. No
+      se consulta antes para rechazarla: si la fila abierta sigue vigente se
+      intenta el insert y la base decide.
+    - Una fila abierta **vencida** ocupa el índice (sólo mira ``revocada_en``):
+      se cierra escribiendo ``revocada_en`` y recién después se abre la nueva.
+    - ``vence_en`` ya llegó con zona horaria y en el futuro (422 si no).
+    """
+    ahora = datetime.now(timezone.utc)
+
+    async with uow:
+        usuario = await uow.usuarios.get_by_id(usuario_id)
+        if usuario is None:
+            raise RecursoNoEncontrado("el usuario", usuario_id)
+
+        abierta = await uow.roles.get_abierta(usuario_id, datos.rol)
+        if (
+            abierta is not None
+            and abierta.vence_en is not None
+            and abierta.vence_en <= ahora
+        ):
+            # Cerrar la vencida libera el índice parcial; el historial queda.
+            abierta.revocada_en = ahora
+            await uow.roles.update(abierta)
+
+        nueva = AsignacionRol(
+            usuario_id=usuario_id,
+            rol=datos.rol,
+            desde=datos.desde or ahora,
+            vence_en=datos.vence_en,
+            otorgada_por=actor,
+        )
+        # Si la abierta seguía vigente, este flush choca con el índice parcial
+        # y el handler central lo traduce a 409 con mensaje propio (RN-18).
+        await uow.roles.add(nueva)
+        await uow.eventos.add(
+            EventoSeguridad(
+                cuando=ahora,
+                actor=actor,
+                accion=f"Asignación de rol {datos.rol} al usuario id {usuario_id}",
+            )
+        )
+
+    return nueva
+
+
+async def revocar_rol(
+    uow: UsuariosUnitOfWork,
+    usuario_id: int,
+    rol: str,
+    *,
+    admin: Usuario,
+) -> AsignacionRol:
+    """Revoca un rol escribiendo ``revocada_en``; la fila no se borra.
+
+    Autoprotección (RN-05) → **409**:
+
+    - un administrador no puede revocarse su propio rol ADMIN;
+    - el sistema nunca queda con 0 ADMINs vigentes.
+
+    El efecto es inmediato: la siguiente petición de la sesión afectada
+    consulta ``asignacion_rol`` y recibe 403, sin esperar a que venza el token
+    (RN-04, caso C-07).
+    """
+    ahora = datetime.now(timezone.utc)
+
+    async with uow:
+        usuario = await uow.usuarios.get_by_id(usuario_id)
+        if usuario is None:
+            raise RecursoNoEncontrado("el usuario", usuario_id)
+
+        abierta = await uow.roles.get_abierta(usuario_id, rol)
+        if abierta is None:
+            raise HTTPException(
+                status_code=HTTP_404, detail=MENSAJE_ROL_NO_ASIGNADO
+            )
+
+        if rol == "ADMIN":
+            if usuario_id == admin.id:
+                raise Conflicto(MENSAJE_AUTOPROTECCION)
+            vigentes = await uow.roles.contar_vigentes("ADMIN", ahora)
+            if vigentes <= 1:
+                raise Conflicto(MENSAJE_ULTIMO_ADMIN)
+
+        abierta.revocada_en = ahora
+        await uow.roles.update(abierta)
+        await uow.eventos.add(
+            EventoSeguridad(
+                cuando=ahora,
+                actor=actor_de(admin),
+                accion=f"Revocación de rol {rol} al usuario id {usuario_id}",
+            )
+        )
+
+    return abierta
+
+
+async def listar_eventos(
+    uow: UsuariosUnitOfWork, params: PageParams
+) -> Page[EventoSeguridad]:
+    """Página de ``evento_seguridad`` para ``GET /eventos`` (sólo ADMIN)."""
+    async with uow:
+        return await uow.eventos.list_page(params)
+
+
 async def cambiar_password(
     uow: UsuariosUnitOfWork,
     usuario: Usuario,
@@ -282,7 +463,18 @@ async def cambiar_password(
         usuario.password_cambiada_en = cambiada_en
         usuario.debe_cambiar_password = False
         await uow.usuarios.update(usuario)
+        # El evento comparte el UoW del cambio (US-016): o quedan los dos, o
+        # ninguno. ``actor`` es texto y el correo identifica al usuario.
+        await uow.eventos.add(
+            EventoSeguridad(
+                cuando=cambiada_en,
+                actor=actor_de(usuario),
+                accion="Cambio de contraseña",
+            )
+        )
         roles = await uow.roles.roles_vigentes(usuario.id, cambiada_en)
 
-    # El token se emite DESPUÉS del commit: iat > password_cambiada_en (RN-07).
-    return crear_token(sub=str(usuario.id), roles=roles)
+    # El token se emite DESPUÉS del commit y con iat_minimo = cambiada_en, así
+    # que su ``iat`` supera estrictamente a ``password_cambiada_en`` (RN-07)
+    # incluso si el reloj devuelve el mismo instante dos veces.
+    return crear_token(sub=str(usuario.id), roles=roles, iat_minimo=cambiada_en)

@@ -104,6 +104,7 @@ Son contrato; romperlas es un defecto. Formato `NUNCA X → hacer Y`:
 - NUNCA exponer `password_hash` en ninguna respuesta → y ninguna entrada inválida termina en 500 (422 de contrato, 409 de integridad).
 - NUNCA devolver el texto crudo de `IntegrityError` → traducir a **409 con mensaje propio** (RN-18).
 - NUNCA calcular el hash del login si el límite de intentos ya se alcanzó → primero RN-08 (429 con `Retry-After`), después la verificación; login con correo inexistente responde **igual** que con hash correcto (hash ficticio, RN-09).
+- NUNCA asumir que dos llamadas al reloj devuelven instantes distintos → el reloj del sistema (Windows: ~15,6 ms de granularidad) repite el mismo valor; todo token se emite con `crear_token(..., iat_minimo=...)` y RN-07 compara con `<=`, no con `<` (bug detectado al verificar C-08: el token anterior sobrevivía al cambio de contraseña ~40 % de las veces).
 
 **SQL e índice**
 - NUNCA concatenar SQL → parámetros ligados en todos los filtros y la búsqueda `q` (caso C-16: `' OR '1'='1` debe devolver lista vacía).

@@ -80,6 +80,59 @@ class AsignacionRolRepository(BaseRepository[AsignacionRol]):
         )
         return list((await self.session.exec(statement)).all())
 
+    async def listar_por_usuario(self, usuario_id: int) -> list[AsignacionRol]:
+        """Todas las asignaciones del usuario, incluidas revocadas y vencidas.
+
+        El historial no se borra nunca: ``GET /usuarios/{id}/roles`` devuelve
+        también las filas cerradas para auditar quién tuvo qué rol y hasta
+        cuándo (US-014).
+        """
+        statement = (
+            select(AsignacionRol)
+            .where(AsignacionRol.usuario_id == usuario_id)
+            .order_by(AsignacionRol.id)
+        )
+        return list((await self.session.exec(statement)).all())
+
+    async def get_abierta(
+        self, usuario_id: int, rol: str
+    ) -> AsignacionRol | None:
+        """Fila con ``revocada_en IS NULL`` para ``(usuario_id, rol)``.
+
+        Puede estar **vencida**: el índice único parcial sólo mira
+        ``revocada_en``, así que una fila vencida sigue ocupando el lugar y hay
+        que cerrarla antes de abrir la nueva (RN-03 / US-014 CA-2). Que exista
+        una fila abierta y **vigente** no se checa acá para responder 409: eso
+        lo garantiza la base al insertar.
+        """
+        statement = select(AsignacionRol).where(
+            AsignacionRol.usuario_id == usuario_id,
+            AsignacionRol.rol == rol,
+            AsignacionRol.revocada_en.is_(None),
+        )
+        return (await self.session.exec(statement)).first()
+
+    async def contar_vigentes(
+        self,
+        rol: str,
+        ahora: datetime | None = None,
+    ) -> int:
+        """Cantidad de asignaciones **vigentes** de un rol (autoprotección RN-05)."""
+        momento = ahora or datetime.now(timezone.utc)
+        statement = (
+            select(func.count(AsignacionRol.id))
+            .where(
+                AsignacionRol.rol == rol,
+                AsignacionRol.revocada_en.is_(None),
+                or_(
+                    AsignacionRol.vence_en.is_(None),
+                    AsignacionRol.vence_en > momento,
+                ),
+            )
+        )
+        result = await self.session.execute(statement)
+        return int(result.scalar_one())
+
 
 class IntentoAccesoRepository(BaseRepository[IntentoAcceso]):
     """Acceso a ``intento_acceso`` (límite de intentos de login, RN-08).

@@ -1,16 +1,18 @@
 import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
+from app.core.dependencies import exigir_password_al_dia
 from app.core.errors import registrar_manejadores
 from app.core.security import hash_password
 from app.modules.health.router import router as health_router
 from app.modules.repuestos.router import router as repuestos_router
 from app.modules.usuarios.auth_router import router as auth_router
+from app.modules.usuarios.router import eventos_router
 from app.modules.usuarios.router import router as usuarios_router
 
 # Registro central de modelos: sin este import, las relaciones que cruzan módulos
@@ -58,21 +60,32 @@ app = FastAPI(
 # Se registra antes de montar los routers para que cubra todos los endpoints.
 registrar_manejadores(app)
 
-app.include_router(health_router)
+# --- Dos grupos de rutas (DD-05 / US-015 CA-1) ------------------------------
+# El control de ``debe_cambiar_password`` se monta **una sola vez**, como
+# dependencia del grupo protegido: FastAPI suma dependencias y no las resta, así
+# que montarlo por router no alcanzaría ni se podría «sacar» en una ruta. El
+# grupo abierto no lo lleva: el afectado tiene que poder loguearse, consultar
+# ``/auth/yo`` y cambiar la contraseña (RN-06).
+grupo_abierto = APIRouter()
+grupo_protegido = APIRouter(dependencies=[Depends(exigir_password_al_dia)])
 
-# Autenticación (C-07): router propio del módulo `usuarios`, con prefix `/auth`.
-# Va en el grupo abierto: registro y login no exigen cookie, y `/auth/yo` y el
-# cambio de contraseña la exigen por dentro (`get_usuario_actual`). C-08 lo
-# re-monta junto con `health` en el grupo abierto y mueve `usuarios`/`repuestos`
-# al grupo protegido, con el control de `debe_cambiar_password` montado una vez
-# (DD-05 / US-015 CA-1).
-app.include_router(auth_router)
+# Abierto: ``/health`` y ``/auth``. ``/auth/yo`` y ``/auth/cambiar-password``
+# exigen sesión por dentro (``get_usuario_actual``), pero no el cambio
+# obligatorio: si lo exigieran, un usuario con clave provisoria no podría
+# cambiar la clave nunca.
+grupo_abierto.include_router(health_router)
+grupo_abierto.include_router(auth_router)
 
-# Routers de prototipo de C-06 (contratos y errores). Todavía en abierto porque
-# C-08 aún no existe: C-08 los re-monta en el grupo protegido y agrega
-# requiere_rol. Hasta entonces POST /usuarios y POST /repuestos son públicos.
-app.include_router(usuarios_router)
-app.include_router(repuestos_router)
+# Protegido: todo lo demás. El 401 lo aporta ``get_usuario_actual`` (vía la
+# dependencia del grupo), el 403 del cambio pendiente el grupo, y el permiso por
+# rol ``requiere_rol`` en cada ruta, consultando la base en cada petición
+# (RN-04). Los routers conservan su prefix y sus tags.
+grupo_protegido.include_router(usuarios_router)
+grupo_protegido.include_router(eventos_router)
+grupo_protegido.include_router(repuestos_router)
+
+app.include_router(grupo_abierto)
+app.include_router(grupo_protegido)
 
 
 @app.get("/", status_code=200)

@@ -445,3 +445,43 @@ async def test_ninguna_respuesta_de_auth_incluye_password_hash(client):
     for respuesta in (registro, login, yo, cambio):
         assert "password_hash" not in respuesta.text
         assert "$2b$" not in respuesta.text
+
+# ---------------------------------------------------------------------------
+# Regresión de RN-07 con un reloj de granularidad gruesa (Windows ~15,6 ms)
+# ---------------------------------------------------------------------------
+async def test_token_del_mismo_instante_que_el_cambio_no_vale(client, login, motor):
+    """Un token emitido en el MISMO instante que el cambio no vale (RN-07).
+
+    Regresión: el reloj de Windows devuelve el mismo valor durante ~15,6 ms, así
+    que ``iat`` y ``password_cambiada_en`` pueden coincidir al microsegundo. La
+    dependencia compara con ``<=`` (no ``<``) y ``crear_token`` garantiza que los
+    tokens emitidos después queden estrictamente por delante.
+    """
+    from app.core.security import verificar_token
+
+    token_viejo = await login("nuevo@example.com")
+    iat = verificar_token(token_viejo)["iat"]
+
+    # Se fuerza el empate exacto que producía el reloj: el cambio queda en el
+    # mismo instante que el token anterior.
+    async with motor.begin() as conexion:
+        await conexion.execute(
+            text(
+                "UPDATE usuario SET password_cambiada_en = to_timestamp(:iat) "
+                "WHERE email = :email"
+            ),
+            {"iat": float(iat), "email": "nuevo@example.com"},
+        )
+
+    client.cookies.clear()
+    anterior = await client.get(
+        "/auth/yo", headers={"Cookie": f"access_token={token_viejo}"}
+    )
+    assert anterior.status_code == 401
+
+    # El token emitido después sí vale: su iat supera estrictamente el cambio.
+    token_nuevo = await login("nuevo@example.com")
+    nuevo = await client.get(
+        "/auth/yo", headers={"Cookie": f"access_token={token_nuevo}"}
+    )
+    assert nuevo.status_code == 200
