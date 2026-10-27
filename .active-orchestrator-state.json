@@ -1,6 +1,6 @@
 {
-  "version": 3,
-  "step": "find-skill",
+  "version": 5,
+  "step": "done",
   "owner": "active-orchestrator",
   "kb": {
     "created_by": "kb-creator",
@@ -26,6 +26,11 @@
       "knowledge-base/10_preguntas_abiertas.md",
       "knowledge-base/README.md"
     ]
+  },
+  "visual_design": {
+    "created_by": "active-orchestrator",
+    "skipped": true,
+    "reason": "API-only project, no UI — design-system phase declared not applicable; no design-system/ artifacts created"
   },
   "roadmap": {
     "created_by": "roadmap-generator",
@@ -61,5 +66,36 @@
       }
     ],
     "installed": []
+  },
+  "agents": {
+    "created_by": "agent-instruction",
+    "files": [
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "reglas_applied": [
+      "dinero: Decimal/NUMERIC(10,2), nunca float; dinero como string en respuestas",
+      "fechas: timestamptz siempre; password_cambiada_en con timezone completa",
+      "esquema solo via Alembic asincrónico; create_all prohibido; ciclo upgrade/downgrade/upgrade verificado",
+      "ningún repositorio confirma: flush() únicamente; el UoW confirma/revierte y no cierra la sesión",
+      "el servicio nunca construye el UoW; el router lo inyecta y el servicio lo abre con async with",
+      "motor y fábrica de sesiones en el lifespan (app.state); get_session con expire_on_commit=False",
+      "sin lazy loading: carga anticipada selectinload/joinload con número fijo de consultas (C-15)",
+      "unicidad entre vigentes por índices únicos parciales, no por consulta previa",
+      "JWT solo en cookie HttpOnly SameSite=Lax; nunca Bearer ni localStorage (C-03)",
+      "roles consultados en DB en cada petición (requiere_rol); nunca confiar rol del cliente",
+      "password_hash jamás en respuestas; entrada inválida nunca termina en 500",
+      "IntegrityError traducido a 409 con mensaje propio (RN-18)",
+      "límite de intentos ANTES del hash en login (RN-08 → 429 Retry-After); hash ficticio idéntico (RN-09)",
+      "parámetros ligados siempre; nunca concatenar SQL (C-16)",
+      "CHECKs: movimiento_stock.cantidad <> 0; historial_precio.precio_nuevo <> precio_anterior (IN-01/IN-02)",
+      "sin commit/push sin pedido explícito; Conventional Commits sin trailers de co-autoría IA",
+      "stack cerrado: sin dependencias nuevas sin confirmación (testing solo desde C-05)",
+      "respetar dependencias de CHANGES.md; verificar archive/ antes de proponer un change"
+    ]
+  },
+  "registry": {
+    "created_by": "skill-registry",
+    "file": ".atl/skill-registry.md"
   }
 }

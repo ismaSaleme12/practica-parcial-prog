@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Entorno
+.env
+.env.*
+!.env.example
+
+# Testing / cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Artefactos locales de la fundación (no se versionan)
+.atl/
+.active-orchestrator-state.json.bak-v3
+
+# Editores / SO
+.vscode/
+.idea/
+Thumbs.db
