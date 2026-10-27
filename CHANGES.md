@@ -116,7 +116,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 > Sin paralelismo posible: cada change es prerrequisito del siguiente. Governance alto al inicio porque todo lo demás se apoya acá.
 
 ### [C-01] `foundation-setup`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 1 del TP (US-001 a US-004) — estructura obligatoria, configuración y ciclo de vida
   - Estructura de directorios exacta de la KB: `main.py`, `seed.py`, `alembic.ini`, `env.example`, `requirements.txt` en raíz; `app/core/` (7 archivos: `config.py`, `database.py`, `security.py`, `dependencies.py`, `repository.py`, `paginacion.py`, `unit_of_work.py`); `app/modules/` con `health`, `usuarios`, `clientes`, `repuestos`, `ordenes` (cada módulo con las 6 capas; `health` sólo `router.py`); `migrations/versions/`; `test/`
   - `Settings` con pydantic-settings: `POSTGRES_USER/PASSWORD/DB/HOST/PORT` + `@computed_field` que arma la URL con driver asincrónico; `SECRET_KEY` y `POSTGRES_PASSWORD` **sin default** (la app no arranca si faltan); `BCRYPT_ROUNDS`, duración del token, `COOKIE_SECURE`, `SQL_ECHO`, tamaño del pool
