@@ -135,7 +135,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ---
 
 ### [C-02] `core-persistence`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 6 (repositorios y UoW) — capa base, previa a cualquier modelo o endpoint
   - `app/core/repository.py`: `BaseRepository[T]` (recibe sesión y **clase del modelo** en el constructor; `add`/`update` con `flush()` **nunca** `commit()`) y `SoftDeleteRepository[T]` (hereda, filtra `borrado_en`, `get_by_id_including_deleted`, `soft_delete`)
   - `app/core/unit_of_work.py`: `UnitOfWork` base como gestor de contexto asincrónico — confirma al salir sin excepción, revierte con excepción, **no cierra la sesión** (no la creó); expone la misma sesión a todos sus repositorios
@@ -168,7 +168,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 - **Leer antes**:
   - `knowledge-base/04_modelo_de_datos.md` (completo — nombres obligatorios)
   - `knowledge-base/05_reglas_de_negocio.md` RN-01, RN-03, RN-19; §Excepciones generales (Dinero/Fechas)
-  - `knowledge-base/10_preguntas_abiertas.md` IN-01, IN-02 (signo de los CHECK `>>`)
+  - `knowledge-base/10_preguntas_abiertas.md` IN-01, IN-02 — **resueltas**: los CHECK se escriben `cantidad <> 0` y `precio_nuevo <> precio_anterior` (verificado contra el PDF original)
   - `knowledge-base/09_decisiones_y_supuestos.md` DD-01, DD-02, DD-03
 
 ---

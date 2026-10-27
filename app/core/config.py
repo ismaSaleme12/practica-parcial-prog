@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str
     BCRYPT_ROUNDS: int = 12
+    BCRYPT_MAX_CONCURRENT_HASHES: int = 4
     TOKEN_EXPIRE_MINUTES: int = 30
     COOKIE_SECURE: bool = False
     SQL_ECHO: bool = False
@@ -19,7 +20,10 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def ASYNC_DATABASE_URL(self) -> str:
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
 
     model_config = SettingsConfigDict(
         env_file=".env",
