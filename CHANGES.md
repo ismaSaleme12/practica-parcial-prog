@@ -359,7 +359,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ## FASE 6 — Calidad de lectura y entrega (Ejercicio 8 + ensayo final)
 
 ### [C-12] `detalle-sin-n1`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Ejercicio 8 (US-025) — lecturas con número fijo de consultas y asincronía
   - `GET /ordenes/{id}`: vehículo + cliente + ítems + repuesto de cada ítem + historial resueltos con número **fijo** de consultas (selectinload/joinload en el repositorio); verificar con `SQL_ECHO=true` que 2 y 4 ítems dan las **mismas** consultas (C-15)
   - `GET /clientes/{id}` y `/mis-vehiculos` / `/mis-ordenes`: mismas precargas — ninguna lectura depende de carga perezosa

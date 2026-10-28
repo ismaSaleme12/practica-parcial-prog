@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-10-27
+goal: 'Calidad de lectura y asincronía (US-025 / caso C-15, US-026 / caso C-12): demostrar contra PostgreSQL real que el detalle de una orden mantiene un número fijo de consultas con 2 y 4 ítems, que la ficha del cliente y las consultas de lo propio no crecen con las filas hijas, que ningún handler ejecuta IO bloqueante, que el aviso de BackgroundTasks corre sólo después del commit y que SQL_ECHO es habilitable por entorno con default false. Sin endpoints, contratos, dependencias ni esquema nuevos.'

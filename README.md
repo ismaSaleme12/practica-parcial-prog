@@ -41,7 +41,7 @@ El sistema modela el circuito completo del taller:
 
 La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices únicos parciales para el borrado lógico y los roles vigentes, un catálogo de estados y un disparador de **sólo agregado** sobre tres tablas de auditoría.
 
-**Estado actual:** los changes `C-01` a `C-11` están implementados y archivados. La API está **completa en endpoints**: autenticación, RBAC, clientes/vehículos, repuestos/stock y órdenes de trabajo con su máquina de estados y la transacción de descuento de stock. Quedan la auditoría de lectura sin N+1 y el aviso en segundo plano (`C-12`) y la consolidación de la evidencia de entrega (`C-13`).
+**Estado actual:** los changes `C-01` a `C-12` están implementados y archivados. La API está **completa en endpoints y auditada en lectura**: autenticación, RBAC, clientes/vehículos, repuestos/stock y órdenes de trabajo con su máquina de estados, la transacción de descuento de stock y la verificación de que las lecturas usan un número fijo de consultas. Queda la consolidación de la evidencia de entrega (`C-13`).
 
 ---
 
@@ -49,7 +49,7 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 
 <!-- ACTUALIZAR AL ARCHIVAR UN CHANGE: marcar la fila como completada, ajustar el contador de pruebas y mover el change de pending a openspec/changes/archive/. -->
 
-**Changes completados: 11 de 13.** **Suite: 189 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
+**Changes completados: 12 de 13.** **Suite: 197 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
 
 | ID | Change | Estado | Fase |
 |---|---|---|---|
@@ -64,10 +64,10 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 | C-09 | `clientes-vehiculos` | ✓ completado | 5 — Dominio del taller |
 | C-10 | `repuestos-stock` | ✓ completado | 5 — Dominio del taller |
 | C-11 | `ordenes-trabajo` | ✓ completado | 5 — Dominio del taller |
-| C-12 | `detalle-sin-n1` | ☐ pendiente | 6 — Calidad de lectura |
+| C-12 | `detalle-sin-n1` | ✓ completado | 6 — Calidad de lectura |
 | C-13 | `casos-de-prueba` | ☐ pendiente | 6 — Entrega |
 
-Los once changes completados están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/` (33 capacidades).
+Los doce changes completados están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/` (34 capacidades).
 
 > **Cómo actualizar esta sección** (obligatorio al archivar un change): (1) marcar la fila con ✓, (2) actualizar el contador de changes y el de pruebas con el resultado real de `python -m pytest test/ -q`, (3) mover el directorio del change de `openspec/changes/` a `openspec/changes/archive/`, (4) marcar el `[x]` en `CHANGES.md`. No se actualiza «a ojo»: el contador sale de la corrida de la suite.
 
@@ -131,7 +131,7 @@ Puntos que sostienen el diseño:
 - **Un solo punto de confirmación.** `UnitOfWork.__aexit__` hace `commit()` si el bloque terminó bien y `rollback()` si salió con excepción (y relanza el fallo del commit). Los repositorios hacen `flush()` para obtener la PK y **nunca** `commit()`.
 - **Quién crea, abre, confirma y cierra.** La sesión la crea `get_session` (una por petición, desde `app.state.session_maker`, con `expire_on_commit=False`) y la cierra la propia dependencia. El router arma el UoW con `Depends(get_uow)`; el servicio lo abre con `async with`; el UoW confirma o revierte, pero **no** cierra la sesión.
 - **Motor y fábrica en el lifespan.** Se crean en `main.py` (`create_async_engine` + `async_sessionmaker`) y se guardan en `app.state`. Nunca al importar un módulo. Al apagar, `engine.dispose()`.
-- **Sin carga perezosa.** Todas las relaciones declaran `lazy="raise_on_sql"`: un acceso perezoso lanza en vez de disparar SQL escondido. Las lecturas que necesitan relaciones deben precargarlas en el repositorio con `selectinload`/`joinedload` y un número fijo de consultas (caso C-15, pendiente en C-12).
+- **Sin carga perezosa.** Todas las relaciones declaran `lazy="raise_on_sql"`: un acceso perezoso lanza en vez de disparar SQL escondido. Las lecturas que necesitan relaciones deben precargarlas en el repositorio con `selectinload`/`joinedload` y un número fijo de consultas (caso C-15, verificado en `test/test_detalle.py`).
 - **Registro central de modelos.** `app/models.py` importa las trece tablas. Es obligatorio importarlo (lo hacen `main.py` y `migrations/env.py`) para que SQLAlchemy resuelva las relaciones que cruzan módulos.
 - **`select` se importa de SQLModel.** Con `session.exec(...)`, el `select` de SQLAlchemy devuelve `Row` y la entidad pierde sus atributos sin error de tipos.
 - **Contratos separados del ORM.** `app/core/schemas.py` define `ContratoEntrada` (`extra="forbid"`), `ContratoSalida` (`from_attributes`) y `Dinero` (Decimal que se serializa como string con dos decimales).
@@ -214,17 +214,20 @@ practica-parcial-prog/
 │   ├── test_rbac.py            # 401/403, roles, autoprotección, eventos
 │   ├── test_clientes.py        # Clientes, vehículos, baja lógica, /mis-vehiculos
 │   ├── test_repuestos.py       # Catálogo, stock, historial de precios, reposición
+│   ├── test_ordenes.py         # Alta, máquina de estados, rollback de stock, permisos
+│   ├── test_detalle.py         # Conteo fijo de consultas (C-15) y aviso post-commit (C-12)
 │   ├── contracts.http          # Evidencia C-06 (abre con login de ADMIN)
 │   ├── auth.http               # Evidencia C-07
 │   ├── rbac.http               # Evidencia C-08
 │   ├── clientes.http           # Evidencia C-09
-│   └── repuestos.http          # Evidencia C-10
+│   ├── repuestos.http          # Evidencia C-10
+│   └── ordenes.http            # Evidencia C-11 (A-01 a A-04)
 ├── knowledge-base/             # 10 documentos de dominio + README
 ├── openspec/
 │   ├── config.yaml
-│   ├── specs/                  # Capacidades especificadas (30)
+│   ├── specs/                  # Capacidades especificadas (34)
 │   └── changes/
-│       └── archive/            # C-01 a C-10 archivados
+│       └── archive/            # C-01 a C-12 archivados
 └── docs/
     └── TP_Cap1a6_Consigna.pdf  # Consigna original (22 páginas)
 ```
@@ -471,7 +474,7 @@ Notas de contrato verificadas en el código:
 | Método | Ruta | Rol requerido | Descripción | Códigos |
 |---|---|---|---|---|
 | GET | `/ordenes` | ADMIN, RECEPCION, MECANICO | Listado paginado (`creada_en` desc, `id` desc); filtro `estado` validado por enum del contrato | `200`, `401`, `403`, `422` |
-| GET | `/ordenes/{orden_id}` | Cualquier sesión; **CLIENTE sólo las de sus vehículos** | Detalle con vehículo, cliente, ítems con su repuesto e historial, **precargado** (3 consultas fijas) | `200`, `401`, `403`, `404` |
+| GET | `/ordenes/{orden_id}` | Cualquier sesión; **CLIENTE sólo las de sus vehículos** | Detalle con vehículo, cliente, ítems con su repuesto e historial, **precargado** (3 consultas de dominio, 5 contando sesión y roles) | `200`, `401`, `403`, `404` |
 | POST | `/ordenes` | ADMIN, RECEPCION | Alta `PENDIENTE` con ≥ 1 ítem y sin repuestos repetidos; precio copiado y `total` calculado en el servidor; primera línea de historial en el mismo UoW | `201`, `401`, `403`, `409`, `422` |
 | POST | `/ordenes/{orden_id}/iniciar` | MECANICO | `PENDIENTE → EN_REPARACION`; asigna el mecánico de la sesión + historial | `200`, `401`, `403`, `404`, `409` |
 | POST | `/ordenes/{orden_id}/terminar` | ADMIN o mecánico **asignado** | `EN_REPARACION → TERMINADA`: descuenta stock, un movimiento negativo por ítem e historial; **403 antes que 409**; agenda el aviso simulado | `200`, `401`, `403`, `404`, `409` |
@@ -489,14 +492,9 @@ Notas de contrato verificadas en el código:
 - `historial_estado_orden` y `movimiento_stock` son de **sólo agregado**; el catálogo `estado_orden` no se escribe desde la API (RN-15, RN-19).
 - El aviso al cliente se agenda con `BackgroundTasks` **después** de que el servicio retorna (es decir, después del commit): un 403/404/409 nunca lo agenda (DD-13 / US-026).
 
-### Pendientes (`C-12` y `C-13`)
+### Pendiente (`C-13`)
 
-Ninguna de las dos agrega rutas nuevas:
-
-| Change | Alcance |
-|---|---|
-| C-12 | Auditoría de lectura: conteo fijo de consultas en `GET /ordenes/{id}`, `GET /clientes/{id}` y `/mis-*` (caso C-15), aviso `BackgroundTasks` verificado post-confirmación (caso C-12) y `SQL_ECHO` habilitable |
-| C-13 | Consolidación de la evidencia `.http`, `test/solo_agregado.sql` (caso C-14), matriz C-01..C-19 y verificación integral |
+No agrega rutas nuevas: consolida la evidencia `.http`, `test/solo_agregado.sql` (caso C-14), la matriz C-01..C-19 y la verificación integral de la entrega.
 
 ---
 
@@ -666,9 +664,11 @@ Qué hace `test/conftest.py`:
 $env:TEST_POSTGRES_DB="taller_mecanico_c10"; python -m pytest test/ -q
 ```
 
+Para ver las consultas que emite la API, `SQL_ECHO=true` (por entorno o `.env`) hace que el motor las registre en consola; el default es `false` y la suite lo mantiene apagado. Es la vía manual para confirmar que una lectura no crece con las filas hijas.
+
 Corre contra **PostgreSQL real**: sin SQLite, sin repositorios falsos, sin mocks de red y sin testcontainers. El único doble es el de `/health/ready` cuando se simula una caída de infraestructura.
 
-**Resultado actual: 189 pruebas en verde.**
+**Resultado actual: 197 pruebas en verde.**
 
 ### Qué cubre cada archivo
 
@@ -683,6 +683,7 @@ Corre contra **PostgreSQL real**: sin SQLite, sin repositorios falsos, sin mocks
 | `test/test_clientes.py` | 14 | Alta de cliente y vehículo, documento y patente repetidos → 409, `GET /clientes/{id}` con vehículos precargados, baja con órdenes abiertas → 409, patente reutilizable tras la baja (C-19), aislamiento de `/mis-vehiculos` (RN-17), 401/403 |
 | `test/test_repuestos.py` | 46 | `stock_inicial` + movimiento «Stock inicial», `stock` por PATCH → 422 (C-16), historial de precio sólo si cambió (C-18), `reponer` con movimiento, baja lógica y reutilización del código, `q` con inyección → `total: 0`, paginación de movimientos y precios, 401/403 |
 | `test/test_ordenes.py` | 65 | Alta con precio copiado y `total` del servidor, repuestos repetidos y campos no declarados → 422 (RN-10), catálogo vacío → 409 (C-09), repuesto/vehículo inexistente o de baja no deja orden (C-10), stock insuficiente con rollback total (C-11), 403 antes que 409 (SU-04), iniciar/terminar/cancelar, aviso agendado sólo al confirmar (C-12), cancelar una TERMINADA → 409 (C-13), estado no declarado → 422 (C-17), detalle ajeno → 403 (C-06), `/mis-ordenes`, 401/403 |
+| `test/test_detalle.py` | 8 | Conteo de consultas con `before_cursor_execute` sobre `motor.sync_engine`: detalle con 2 vs 4 ítems y 1 vs 2 líneas de historial (C-15), ficha y `/mis-*` con más filas hijas, aviso que ve `TERMINADA` desde una sesión nueva (C-12), handlers `async def`, `SQL_ECHO` apagado por defecto |
 
 ### Evidencia `.http`
 
@@ -712,16 +713,16 @@ Los archivos `test/*.http` son la **evidencia pedida por la consigna**; la suite
 | C-09 | Catálogo de estados vacío → 409 | ✓ `test_ordenes.py` |
 | C-10 | Repuesto inexistente no deja la orden | ✓ `test_ordenes.py` (también vehículo inexistente o de baja) |
 | C-11 | Stock insuficiente → rollback total | ✓ `test_ordenes.py` |
-| C-12 | Aviso post-respuesta sólo si se confirmó | ◐ `test_ordenes.py` (agendado al confirmar, no agendado en 409); la verificación de temporalidad estricta queda en `C-12` |
+| C-12 | Aviso post-respuesta sólo si se confirmó | ✓ `test_detalle.py` (la tarea ve `TERMINADA` desde una sesión nueva) + `test_ordenes.py` (un 409 no la agenda) |
 | C-13 | Cancelar una orden TERMINADA → 409 | ✓ `test_ordenes.py` |
 | C-14 | `UPDATE`/`DELETE` rechazados en las tablas de sólo agregado | ☐ pendiente: `test/solo_agregado.sql` **no existe todavía** (`C-13`); se ejercita con `psql` |
-| C-15 | Detalle con 2 y 4 ítems usa el mismo número de consultas | ☐ pendiente (`C-12`): las precargas ya están, falta el conteo automatizado |
+| C-15 | Detalle con 2 y 4 ítems usa el mismo número de consultas | ✓ `test_detalle.py` (5 consultas en ambos casos) |
 | C-16 | `stock` por PATCH → 422 e inyección SQL en `q` | ✓ `test_repuestos.py` |
 | C-17 | Estado no declarado → 422 | ✓ `test_ordenes.py` |
 | C-18 | PATCH sin cambio de precio no deja línea | ✓ `test_repuestos.py` |
 | C-19 | Patente reutilizable después de la baja | ✓ `test_clientes.py` |
 
-Quedan **17 casos cubiertos** (C-01 a C-11, C-13 y C-16 a C-19), **C-12 parcial** (el aviso ya se agenda sólo al confirmar; falta auditarlo con la respuesta en curso) y **2 pendientes** (C-14 y C-15), ambos entregables de `C-12` y `C-13`. La matriz definitiva —`.http` + prueba automatizada por caso— es entregable de `C-13`.
+Quedan **18 casos cubiertos** (C-01 a C-13 y C-15 a C-19) y **1 pendiente** (C-14, `test/solo_agregado.sql`), entregable de `C-13`. La matriz definitiva —`.http` + prueba automatizada por caso— es entregable de `C-13`.
 
 ---
 
@@ -738,8 +739,8 @@ El proyecto usa **OPSX/OpenSpec** (spec-driven development). Cada unidad de trab
 ```
 
 - **Changes en curso:** `openspec/changes/<change>/` con `proposal.md`, `design.md`, `tasks.md` y `specs/`.
-- **Changes cerrados:** `openspec/changes/archive/<fecha>-<change>/` (C-01 a C-11 ya archivados).
-- **Capacidades vigentes:** `openspec/specs/<capacidad>/spec.md` (33 capacidades).
+- **Changes cerrados:** `openspec/changes/archive/<fecha>-<change>/` (C-01 a C-12 ya archivados).
+- **Capacidades vigentes:** `openspec/specs/<capacidad>/spec.md` (34 capacidades).
 - **Orden y dependencias:** `CHANGES.md` es el índice canónico (árbol, gates, camino crítico, plan con 3 agentes).
 
 **Commits:** Conventional Commits en español (`feat:`, `fix:`, `test:`, `chore:`), **sin trailers de co-autoría IA**. No se commitea ni se pushea sin pedido explícito del usuario.
@@ -776,12 +777,11 @@ Lo que falta o merece atención, sin dramatizar:
 
 **Alcance pendiente**
 
-- **No hay auditoría de N+1 ni de `BackgroundTasks`** (`C-12`): `/ordenes/{id}`, `/clientes/{id}`, `/mis-vehiculos` y `/mis-ordenes` ya precargan con un número fijo de consultas, pero falta el conteo automatizado que pruebe que 2 y 4 ítems usan las mismas consultas (caso C-15). El aviso al cliente ya se agenda con `BackgroundTasks` sólo después del commit y hay tests de que un 409 no lo agenda; falta verificar que corra con la respuesta ya emitida (caso C-12).
-- **Falta la evidencia de entrega** (`C-13`): `test/solo_agregado.sql` (caso C-14) no existe; la matriz definitiva C-01..C-19 (`.http` + prueba automatizada) y la consolidación de los `.http` quedan para ese change.
+- **Falta la evidencia de entrega** (`C-13`): `test/solo_agregado.sql` (caso C-14) no existe; la matriz definitiva C-01..C-19 (`.http` + prueba automatizada) y la consolidación de los `.http` quedan para ese change. La auditoría de lectura de `C-12` ya está: el detalle usa 5 consultas con 2 y con 4 ítems, la ficha 4 y `/mis-*` 3–5, todas sin carga perezosa.
 
 **Deuda técnica observada en el código**
 
-- **`session.execute()` genera `DeprecationWarning` de SQLModel** en `app/core/repository.py:84` (el `count`) y en `app/modules/usuarios/repository.py:133,155,184` (conteos y `scalar_one`/`one`), además de `app/modules/health/router.py:17`. Son usos legítimos de `Row`/escalar, pero con 189 pruebas la suite emite 434 warnings. Si se migran a `exec()`, hay que revisar que no cambien los tipos de retorno.
+- **`session.execute()` genera `DeprecationWarning` de SQLModel** en `app/core/repository.py:84` (el `count`) y en `app/modules/usuarios/repository.py:133,155,184` (conteos y `scalar_one`/`one`), además de `app/modules/health/router.py:17`. Son usos legítimos de `Row`/escalar, pero con 197 pruebas la suite emite 462 warnings. Si se migran a `exec()`, hay que revisar que no cambien los tipos de retorno.
 - **`/health/ready` devuelve `str(e)` en el `detail` del 503.** Eso puede exponer texto interno del motor (host, usuario, mensaje de conexión) y va contra el espíritu de RN-18, que prohíbe filtrar detalles de la infraestructura. Lo correcto sería un mensaje fijo y el detalle sólo en el log.
 - **Sin bloqueo de fila en el stock.** `POST /repuestos/{id}/reponer` y el descuento de `terminar` leen y escriben `stock` sin `SELECT ... FOR UPDATE`: la concurrencia está fuera de alcance (capítulo 7), pero dos reposiciones o dos terminaciones simultáneas pueden perder una actualización. La transacción de `terminar` se apoya en el `CHECK stock >= 0` y en el rollback total (design D8 de C-11).
 - **La documentación describe el objetivo completo, no sólo lo implementado.** `knowledge-base/02_descripcion_general.md` lista todos los endpoints (incluidos los de `C-09` a `C-13`) y `knowledge-base/08_arquitectura_propuesta.md` muestra la estructura de módulos completa. La estructura real de hoy está en [Estructura de directorios](#estructura-de-directorios) y la lista real de rutas en [Endpoints](#endpoints).
