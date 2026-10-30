@@ -1,0 +1,72 @@
+# Evidencia del caso C-01 — salud del proceso y ciclo de vida (US-001 a US-003)
+#
+# Requiere la app levantada (uvicorn main:app --reload) y la base migrada:
+#
+#   alembic upgrade head
+#   python seed.py
+#   uvicorn main:app --reload
+#
+# `/health` vive en el grupo ABIERTO (main.py): no pide cookie. Es lo único que
+# se puede consultar sin sesión, junto con `/auth`.
+#
+# En cada bloque se comenta el código y el cuerpo esperado.
+#
+# La réplica automatizada de los tres bloques HTTP está en `test/test_health.py`
+# (3 tests). El bloque 0 no es HTTP: documenta la condición dura de arranque.
+
+@baseUrl = http://localhost:8000
+
+### 0) Arranque sin secretos: la app NO debe levantar sin SECRET_KEY (condición dura)
+# No es una petición HTTP: se ejecuta en una terminal, en la raíz del repo. El
+# `.env` local (no versionado) y el entorno aportan los valores normales; este
+# comando los anula y desactiva el `.env` (`_env_file=None`) para aislar el
+# contrato:
+#
+#   $env:SECRET_KEY=$null; $env:POSTGRES_PASSWORD=$null
+#   python -c "from app.core.config import Settings; Settings(_env_file=None)"
+#
+# Esperado: ValidationError de pydantic-settings, con **2** errores
+#   pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings
+#   POSTGRES_PASSWORD
+#     Field required [type=missing, input_value={}, input_type=dict]
+#   SECRET_KEY
+#     Field required [type=missing, input_value={}, input_type=dict]
+# `Settings` declara `SECRET_KEY` y `POSTGRES_PASSWORD` SIN default: no hay
+# credenciales inventadas en el código y la app no arranca sin ellas.
+#
+# Verificación automatizada del contrato (sin arrancar la app):
+#   python -c "from app.core.config import Settings; print(Settings.model_fields['SECRET_KEY'].is_required(), Settings.model_fields['POSTGRES_PASSWORD'].is_required())"
+# Esperado: True True
+
+### 1) Liveness: el proceso está vivo (no toca la base)
+GET {{baseUrl}}/health/live
+
+# Esperado: 200
+# { "status": "alive" }
+# No abre sesión ni ejecuta SQL: responde aunque PostgreSQL esté caído.
+
+### 2) Readiness: la base contesta (SELECT 1)
+GET {{baseUrl}}/health/ready
+
+# Esperado: 200
+# { "status": "ready", "database": "connected" }
+
+### 3) Readiness con la base caída → 503 (no 500 y sin traza)
+# Paso previo, en una terminal de administrador (Windows):
+#   Stop-Service postgresql-x64-18       # o el nombre del servicio instalado:
+#                                        # Get-Service *postgres*
+# Con el servicio detenido, ejecutar este bloque:
+GET {{baseUrl}}/health/ready
+
+# Esperado: 503
+# { "detail": "Database not ready: <texto del driver>" }
+# El handler atrapa la excepción y responde 503; no aparece una traza de
+# SQLAlchemy ni el stack de Python.
+#
+# Restaurar el servicio antes de seguir:
+#   Start-Service postgresql-x64-18
+#
+# Réplica automatizada (sin detener el servicio, con un doble de `get_session`
+# que simula una caída de infraestructura):
+#   python -m pytest test/test_health.py -q
+#   test_health.py::test_ready_responde_503_si_la_base_no_contesta

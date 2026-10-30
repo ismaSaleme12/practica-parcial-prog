@@ -14,6 +14,10 @@
 #   - `movimiento_stock` e `historial_precio_repuesto` son de sólo agregado
 #     (RN-15): nunca se actualizan ni se borran.
 #
+# Caso C-14 (el disparador rechaza UPDATE/DELETE en las tres tablas de auditoría)
+# NO es demostrable por HTTP: vive en `test/solo_agregado.sql` (psql) y su
+# réplica automatizada en `test/test_solo_agregado.py`.
+#
 # Matriz de permisos (03_actores_y_roles.md):
 #   - GET /repuestos y GET /repuestos/{id}: ADMIN, RECEPCION, MECANICO.
 #   - POST /repuestos, PATCH, DELETE, /reponer, /movimientos, /precios: ADMIN.

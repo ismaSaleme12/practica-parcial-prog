@@ -341,6 +341,22 @@ POST {{baseUrl}}/ordenes/4/terminar
 # línea EN_REPARACION → TERMINADA. Recién después del commit, `BackgroundTasks`
 # ejecuta el aviso simulado (`await asyncio.sleep(0.5)` + log):
 #   INFO app.ordenes — Aviso simulado al cliente: la orden 4 está terminada.
+#
+# CÓMO VER ESA LÍNEA: `uvicorn main:app --reload` **no la muestra**, porque
+# uvicorn configura el nivel de sus propios loggers y deja el root logger en
+# WARNING: el `logger.info` de `app.ordenes` se emite pero queda filtrado.
+# Para verlo, levantar la app con el root en INFO (mismo comando, sin tocar código):
+#
+#   python -c "import logging, uvicorn; logging.basicConfig(level=logging.INFO); uvicorn.run('main:app', reload=True)"
+#
+# Salida observada (2026-10-27, orden 5 recién terminada):
+#   INFO:app.ordenes:Aviso simulado al cliente: la orden 5 está terminada.
+# La línea aparece ~0.5 s DESPUÉS de la respuesta 200 (el `await asyncio.sleep(0.5)`
+# de la tarea de fondo) y no aparece si `terminar` respondió 403/404/409.
+#
+# Réplica automatizada: test_ordenes.py::test_terminar_agenda_el_aviso_simulado y
+# test_detalle.py::test_c12_el_aviso_corre_despues_del_commit (la tarea de fondo
+# abre una sesión nueva y ve TERMINADA, no EN_REPARACION: corre post-commit).
 
 ### 15) Un ADMIN puede terminar una orden que no tiene asignada
 # Login de ADMIN:
@@ -510,7 +526,75 @@ Content-Type: application/json
 
 # Esperado: 401 (el 401 se evalúa antes que el 422 del cuerpo).
 
-### 21) C-09 — catálogo vacío: 409 y no crea nada (RN-19)
+### 21) C-15 — el detalle no genera N+1: 2 y 4 ítems dan las MISMAS consultas
+# Este bloque no se demuestra sólo con HTTP: hay que **contar** las sentencias que
+# el motor imprime. El paso previo es levantar la app con `SQL_ECHO` encendido.
+#
+# Paso previo (terminal, raíz del repo; no es una petición):
+#   $env:SQL_ECHO="true"; uvicorn main:app --reload
+#   (o SQL_ECHO=true en el .env). Sin esto la consola no muestra las consultas.
+#
+# 1. Con la cookie de RECEPCION, crear una orden de 2 ítems y otra de 4 en AAA111:
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Medición con 2 ítems",
+  "items": [
+    { "repuesto_id": 1, "cantidad": 1 },
+    { "repuesto_id": 2, "cantidad": 1 }
+  ]
+}
+
+# Esperado: 201 (id 5), "total": "20500.00" (8500.00 + 12000.00).
+
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "vehiculo_id": 1,
+  "falla": "Medición con 4 ítems",
+  "items": [
+    { "repuesto_id": 1, "cantidad": 1 },
+    { "repuesto_id": 2, "cantidad": 1 },
+    { "repuesto_id": 3, "cantidad": 1 },
+    { "repuesto_id": 4, "cantidad": 1 }
+  ]
+}
+
+# Esperado: 201 (id 6), "total": "24500.00" (8500 + 12000 + 1500 + 2500).
+
+# 2. Pedir el detalle de cada una y contar los bloques
+#    `INFO sqlalchemy.engine.Engine SELECT ...` de la consola:
+GET {{baseUrl}}/ordenes/5
+
+GET {{baseUrl}}/ordenes/6
+
+# Esperado en AMBOS casos: 200 y **5 sentencias SELECT** (ni una más con 4
+# ítems), más los `BEGIN`/`COMMIT` de la transacción, que no son consultas:
+#   1. SELECT ... FROM usuario ...                    ← la sesión de la cookie
+#   2. SELECT ... FROM orden_trabajo LEFT OUTER JOIN vehiculo LEFT OUTER JOIN cliente
+#      ... LEFT OUTER JOIN estado_orden               ← orden + vehículo + cliente
+#   3. SELECT ... FROM historial_estado_orden ...     ← el historial en UNA consulta
+#   4. SELECT ... FROM item_orden LEFT OUTER JOIN repuesto ...
+#      ← TODOS los ítems en UNA consulta, no una por ítem
+#   5. SELECT ... FROM asignacion_rol ...             ← roles vigentes (RN-04)
+# El orden exacto de las cinco puede variar entre corridas; el criterio es el
+# NÚMERO: con 2 ítems y con 4, cinco. La consulta de `item_orden` aparece UNA
+# sola vez en los dos casos, y no una por ítem: ése es el caso C-15.
+# Medición real de esta evidencia (SQL_ECHO=true, 2026-10-27): 5 SELECT en la
+# orden de 2 ítems y 5 en la de 4, con `item_orden` una sola vez en cada una.
+# Las relaciones declaran `lazy="raise_on_sql"`: si faltara una precarga, el
+# acceso lanzaría en vez de emitir una consulta silenciosa.
+#
+# Réplica automatizada (no necesita SQL_ECHO ni contar a ojo): un contador
+# `before_cursor_execute` sobre el motor mide la petición completa y asserta la
+# igualdad, el techo y que `item_orden` se consultó una sola vez:
+#   python -m pytest test/test_detalle.py -q
+#   test_detalle.py::test_c15_detalle_mantiene_el_conteo_con_2_y_4_items
+
+### 22) C-09 — catálogo vacío: 409 y no crea nada (RN-19)
 # BLOQUE DESTRUCTIVO: ejecutarlo al final, porque vacía el catálogo y con él las
 # órdenes, los ítems y el historial (TRUNCATE ... CASCADE). En psql:
 #   TRUNCATE estado_orden CASCADE;

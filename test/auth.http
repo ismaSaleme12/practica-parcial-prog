@@ -123,6 +123,10 @@ Content-Type: application/json
 # en `intento_acceso` pero dejan de contar).
 
 ### 8) Bearer NO autentica (caso C-03)
+# OJO: para que este bloque pruebe algo hay que llegar **sin cookie**. Borrar la
+# cookie `access_token` del tarro del cliente HTTP (o usar una ventana/colección
+# sin sesión) antes de enviarlo. Si la cookie del bloque 4 sigue viajando, la
+# petición responde 200 —que es lo correcto— y no demuestra nada.
 GET {{baseUrl}}/auth/yo
 Authorization: Bearer <pegar acá el JWT de la cookie del login>
 
@@ -130,6 +134,7 @@ Authorization: Bearer <pegar acá el JWT de la cookie del login>
 # { "detail": "No hay una sesión válida." }
 # `get_usuario_actual` lee SÓLO request.cookies["access_token"]; el header
 # Authorization se ignora. Sin cookie no hay sesión aunque el token sea válido.
+# Réplica automatizada: test_auth.py::test_authorization_bearer_no_autentica_solo_sirve_la_cookie
 
 ### 9) /auth/yo con cookie → 200 (usuario, roles vigentes y roles del token)
 GET {{baseUrl}}/auth/yo

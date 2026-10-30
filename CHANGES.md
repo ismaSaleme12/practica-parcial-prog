@@ -378,7 +378,7 @@ Paso │ Agente A (Backend Core)    │ Agente B (Backend Aux)     │ Agente C 
 ---
 
 ### [C-13] `casos-de-prueba`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Entrega del TP — cobertura de los casos C-01 a C-19 (evidencia `.http` exigida) + suite automatizada y verificación integral
   - `test/*.http` con **todos** los casos de la consigna y la respuesta esperada en comentarios: C-01 (health), C-02 (registro documento repetido), C-03 (cookie vs Bearer), C-04 (cambio de contraseña), C-05 (429 login), C-06 (orden ajena 403), C-07 (revocación inmediata), C-08 (autoprotección), C-09 (catálogo vacío), C-10 (repuesto inexistente no deja orden), C-11 (stock insuficiente rollback), C-12 (aviso post-confirmación), C-13 (cancelar terminada), C-15 (N+1 fijo), C-16 (stock por PATCH / SQL injection), C-17 (estado no declarado 422 / catálogo), C-18 (PATCH sin cambio de precio), C-19 (patente tras baja)
   - `test/solo_agregado.sql` (caso C-14): UPDATE y DELETE sobre las tres tablas de auditoría rechazados por el disparador; INSERT de orden con estado fuera del catálogo rechazado por FK — con captura/comentario de psql

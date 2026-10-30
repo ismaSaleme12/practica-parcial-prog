@@ -41,7 +41,7 @@ El sistema modela el circuito completo del taller:
 
 La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices únicos parciales para el borrado lógico y los roles vigentes, un catálogo de estados y un disparador de **sólo agregado** sobre tres tablas de auditoría.
 
-**Estado actual:** los changes `C-01` a `C-12` están implementados y archivados. La API está **completa en endpoints y auditada en lectura**: autenticación, RBAC, clientes/vehículos, repuestos/stock y órdenes de trabajo con su máquina de estados, la transacción de descuento de stock y la verificación de que las lecturas usan un número fijo de consultas. Queda la consolidación de la evidencia de entrega (`C-13`).
+**Estado actual:** los changes `C-01` a `C-13` están implementados y archivados: la **entrega está completa**. La API cubre autenticación, RBAC, clientes/vehículos, repuestos/stock y órdenes de trabajo con su máquina de estados y la transacción de descuento de stock; las lecturas usan un número fijo de consultas y la evidencia de los 19 casos de la consigna está consolidada en `test/MATRIZ_CASOS.md`.
 
 ---
 
@@ -49,7 +49,7 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 
 <!-- ACTUALIZAR AL ARCHIVAR UN CHANGE: marcar la fila como completada, ajustar el contador de pruebas y mover el change de pending a openspec/changes/archive/. -->
 
-**Changes completados: 12 de 13.** **Suite: 197 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
+**Changes completados: 13 de 13.** **Suite: 207 pruebas en verde** (`python -m pytest test/ -q` contra PostgreSQL real).
 
 | ID | Change | Estado | Fase |
 |---|---|---|---|
@@ -65,9 +65,9 @@ La integridad se delega a PostgreSQL: claves foráneas, `CHECK`, índices único
 | C-10 | `repuestos-stock` | ✓ completado | 5 — Dominio del taller |
 | C-11 | `ordenes-trabajo` | ✓ completado | 5 — Dominio del taller |
 | C-12 | `detalle-sin-n1` | ✓ completado | 6 — Calidad de lectura |
-| C-13 | `casos-de-prueba` | ☐ pendiente | 6 — Entrega |
+| C-13 | `casos-de-prueba` | ✓ completado | 6 — Entrega |
 
-Los doce changes completados están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/` (34 capacidades).
+Los trece changes están archivados en `openspec/changes/archive/`; las capacidades especificadas viven en `openspec/specs/` (35 capacidades). La entrega se verifica con [`test/MATRIZ_CASOS.md`](test/MATRIZ_CASOS.md).
 
 > **Cómo actualizar esta sección** (obligatorio al archivar un change): (1) marcar la fila con ✓, (2) actualizar el contador de changes y el de pruebas con el resultado real de `python -m pytest test/ -q`, (3) mover el directorio del change de `openspec/changes/` a `openspec/changes/archive/`, (4) marcar el `[x]` en `CHANGES.md`. No se actualiza «a ojo»: el contador sale de la corrida de la suite.
 
@@ -216,6 +216,10 @@ practica-parcial-prog/
 │   ├── test_repuestos.py       # Catálogo, stock, historial de precios, reposición
 │   ├── test_ordenes.py         # Alta, máquina de estados, rollback de stock, permisos
 │   ├── test_detalle.py         # Conteo fijo de consultas (C-15) y aviso post-commit (C-12)
+│   ├── test_solo_agregado.py   # Réplica pytest del caso C-14 (disparador y FK)
+│   ├── MATRIZ_CASOS.md         # Matriz C-01..C-19 y checklist de los 8 criterios
+│   ├── solo_agregado.sql       # Evidencia psql del caso C-14
+│   ├── health.http             # Evidencia C-01
 │   ├── contracts.http          # Evidencia C-06 (abre con login de ADMIN)
 │   ├── auth.http               # Evidencia C-07
 │   ├── rbac.http               # Evidencia C-08
